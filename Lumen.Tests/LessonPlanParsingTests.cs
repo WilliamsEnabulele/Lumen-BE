@@ -40,7 +40,7 @@ public class LessonPlanParsingTests
     [Fact]
     public void A_plan_becomes_lessons_and_concepts()
     {
-        var plan = AnthropicLessonAuthor.Parse(Plan, "fallback");
+        var plan = LessonPlanReader.Read(Plan, "fallback");
 
         Assert.Equal("Introduction to Programming", plan.CourseTitle);
         Assert.Single(plan.Lessons);
@@ -51,7 +51,7 @@ public class LessonPlanParsingTests
     [Fact]
     public void Every_concept_carries_the_passage_the_tutor_is_grounded_in()
     {
-        var plan = AnthropicLessonAuthor.Parse(Plan, "fallback");
+        var plan = LessonPlanReader.Read(Plan, "fallback");
 
         Assert.All(plan.Lessons.SelectMany(lesson => lesson.Concepts),
             concept => Assert.False(string.IsNullOrWhiteSpace(concept.SourceExcerpt)));
@@ -60,7 +60,7 @@ public class LessonPlanParsingTests
     [Fact]
     public void Prerequisites_and_visual_hints_survive()
     {
-        var plan = AnthropicLessonAuthor.Parse(Plan, "fallback");
+        var plan = LessonPlanReader.Read(Plan, "fallback");
         var nesting = plan.Lessons[0].Concepts[1];
 
         Assert.Equal(["A loop repeats work"], nesting.Prerequisites);
@@ -73,7 +73,7 @@ public class LessonPlanParsingTests
     {
         // Without an excerpt the tutor falls back on its own general knowledge, which is exactly
         // what grounding exists to prevent. Better to lose the concept than to teach ungrounded.
-        var plan = AnthropicLessonAuthor.Parse("""
+        var plan = LessonPlanReader.Read("""
         {"course_title":"C","summary":"","lessons":[{"title":"L","objective":"O","concepts":[
           {"title":"Real","teaching_intent":"t","prerequisites":[],"source_ref":"p1","source_excerpt":"Something real.","visual_hint":null},
           {"title":"Hollow","teaching_intent":"t","prerequisites":[],"source_ref":"p2","source_excerpt":"","visual_hint":null}
@@ -87,7 +87,7 @@ public class LessonPlanParsingTests
     [Fact]
     public void A_lesson_left_with_no_concepts_is_dropped_too()
     {
-        var plan = AnthropicLessonAuthor.Parse("""
+        var plan = LessonPlanReader.Read("""
         {"course_title":"C","summary":"","lessons":[{"title":"Empty","objective":"O","concepts":[]}]}
         """, "fallback");
 
@@ -97,7 +97,7 @@ public class LessonPlanParsingTests
     [Fact]
     public void A_plan_with_no_title_falls_back_to_the_documents()
     {
-        var plan = AnthropicLessonAuthor.Parse("""{"course_title":"","summary":"","lessons":[]}""", "My Document");
+        var plan = LessonPlanReader.Read("""{"course_title":"","summary":"","lessons":[]}""", "My Document");
 
         Assert.Equal("My Document", plan.CourseTitle);
     }
