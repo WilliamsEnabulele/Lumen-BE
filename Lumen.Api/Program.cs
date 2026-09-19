@@ -23,26 +23,49 @@ builder.Services.AddSingleton<ISessionStore>(_ => new FileSessionStore(dataRoot)
 builder.Services.AddSingleton<IMasteryStore>(_ => new FileMasteryStore(dataRoot));
 builder.Services.AddSingleton<IngestionPipeline>();
 
-// The AI layer. Reading the document and teaching from it are both model work; the
-// deterministic pair behind them is a degraded mode that keeps the upload path runnable
-// without a key, not a second implementation of the product.
+// The AI layer. Reading the document, teaching from it and marking an answer are three
+// separate purchases, so they are three separate choices; the deterministic trio behind them
+// is a degraded mode that keeps the upload path runnable without a key, not a second
+// implementation of the product.
 var ai = builder.Configuration.GetSection(AnthropicOptions.Section).Get<AnthropicOptions>() ?? new AnthropicOptions();
 ai.ApiKey ??= builder.Configuration["Ai:ApiKey"] ?? Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY");
 builder.Services.AddSingleton(ai);
 
-if (ai.IsConfigured)
+var google = builder.Configuration.GetSection(GoogleOptions.Section).Get<GoogleOptions>() ?? new GoogleOptions();
+google.ApiKey ??= Environment.GetEnvironmentVariable("GOOGLE_API_KEY")
+                  ?? Environment.GetEnvironmentVariable("GEMINI_API_KEY");
+builder.Services.AddSingleton(google);
+
+var routing = builder.Configuration.GetSection(AiRouting.Section).Get<AiRouting>() ?? new AiRouting();
+var routed = builder.Configuration.GetSection(AiRouting.Section).Exists();
+
+// Resolved before anything is registered, so a bad choice is a startup failure with a readable
+// message rather than a null reference on the first upload.
+var author = AiWiring.Resolve(AiRole.Author, routing.Author, routed, ai.IsConfigured, google.IsConfigured);
+var tutor = AiWiring.Resolve(AiRole.Tutor, routing.Tutor, routed, ai.IsConfigured, google.IsConfigured);
+var judge = AiWiring.Resolve(AiRole.Judge, routing.Judge, routed, ai.IsConfigured, google.IsConfigured);
+
+if (ai.IsConfigured) builder.Services.AddSingleton(_ => new AnthropicClient { ApiKey = ai.ApiKey });
+if (author == AiProvider.Google) builder.Services.AddHttpClient<GeminiLessonAuthor>();
+
+builder.Services.AddSingleton<ILessonAuthor>(services => author switch
 {
-    builder.Services.AddSingleton(_ => new AnthropicClient { ApiKey = ai.ApiKey });
-    builder.Services.AddSingleton<ILessonAuthor, AnthropicLessonAuthor>();
-    builder.Services.AddSingleton<ITutorBrain, AnthropicTutorBrain>();
-    builder.Services.AddSingleton<IAnswerJudge, AnthropicAnswerJudge>();
-}
-else
+    AiProvider.Anthropic => ActivatorUtilities.CreateInstance<AnthropicLessonAuthor>(services),
+    AiProvider.Google => services.GetRequiredService<GeminiLessonAuthor>(),
+    _ => ActivatorUtilities.CreateInstance<DeterministicLessonAuthor>(services),
+});
+
+builder.Services.AddSingleton<ITutorBrain>(services => tutor switch
 {
-    builder.Services.AddSingleton<ILessonAuthor, DeterministicLessonAuthor>();
-    builder.Services.AddSingleton<ITutorBrain, ScriptedTutorBrain>();
-    builder.Services.AddSingleton<IAnswerJudge, UnjudgedAnswers>();
-}
+    AiProvider.Anthropic => ActivatorUtilities.CreateInstance<AnthropicTutorBrain>(services),
+    _ => ActivatorUtilities.CreateInstance<ScriptedTutorBrain>(services),
+});
+
+builder.Services.AddSingleton<IAnswerJudge>(services => judge switch
+{
+    AiProvider.Anthropic => ActivatorUtilities.CreateInstance<AnthropicAnswerJudge>(services),
+    _ => ActivatorUtilities.CreateInstance<UnjudgedAnswers>(services),
+});
 
 builder.Services.ConfigureHttpJsonOptions(options =>
 {

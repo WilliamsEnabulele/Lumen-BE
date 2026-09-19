@@ -61,6 +61,39 @@ Without `ANTHROPIC_API_KEY` set, the server swaps the lesson author, the tutor a
 judge for a deterministic trio. That is a degraded mode so the upload path stays runnable
 offline, not a second implementation — it does not teach, it recites.
 
+## Which model does what
+
+Three roles, chosen independently, because they are not the same purchase:
+
+```jsonc
+// appsettings.Development.json, or user secrets
+{
+  "Ai": {
+    "Routing": { "Author": "Google", "Tutor": "Anthropic", "Judge": "Anthropic" },
+    "Google": { "AuthorModel": "gemini-3.1-flash-lite" }
+  }
+}
+```
+
+**Authoring** — reading a document and deciding what it teaches — is one large call per upload,
+paid once, over a whole chapter at a time. It is also the only role whose output is checked by
+code before anyone sees it: the plan goes through `LessonPlanReader` and the validator, so a
+cheaper model's mistakes surface as a rejected plan rather than as a bad lesson. Cheap and
+checked is the right trade here, and Gemini Flash is the obvious candidate.
+
+**Teaching** is the recurring cost and the product at the same time. Every turn is a call, and
+what comes back is spoken to the student with nothing downstream to catch a dull explanation.
+This is the role to spend on, and the one the prompt caching exists for.
+
+**Marking** is the smallest call in the system and a well-bounded judgement. A good place for
+a smaller model, once there is evidence it agrees with the larger one — which means running
+both over the same answers, not guessing.
+
+A role routed to a provider with no key, or to one with no implementation for that role, is a
+startup failure with a message saying so. It never falls through to the deterministic trio:
+choosing a provider for cost and silently getting the fallback would look like a cheaper bill
+and a tutor that had stopped teaching, and nothing would say which had happened.
+
 ## The smoke harness
 
 ```bash
