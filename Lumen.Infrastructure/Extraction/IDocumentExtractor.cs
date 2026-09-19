@@ -13,9 +13,10 @@ public interface IDocumentExtractor
 /// <summary>
 /// Picks an extractor by file extension, and refuses clearly when there is none.
 ///
-/// Refusing by name matters more than it looks: a student who uploads a PDF and gets a lesson
-/// built from nothing has been failed silently, which is worse than being told the format is
-/// not supported yet.
+/// Refusing by name matters more than it looks: a student who uploads something unreadable and
+/// gets a lesson built from nothing has been failed silently, which is worse than being told
+/// the format is not supported yet. The same principle runs one level deeper inside
+/// <see cref="PdfExtractor"/>, which refuses a PDF it can open but cannot read.
 /// </summary>
 public sealed class DocumentExtractors(IEnumerable<IDocumentExtractor> extractors)
 {

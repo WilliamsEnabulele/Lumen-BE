@@ -7,6 +7,9 @@
   <ItemGroup>
     <PackageReference Include="coverlet.collector" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <!-- Only to build fixture PDFs: the tests need real files, and a checked-in binary is a
+         fixture nobody can read the diff of. -->
+    <PackageReference Include="PdfPig" />
     <PackageReference Include="xunit" />
     <PackageReference Include="xunit.runner.visualstudio" />
   </ItemGroup>

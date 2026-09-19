@@ -6,6 +6,7 @@
   <ItemGroup>
     <PackageReference Include="Anthropic" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+    <PackageReference Include="PdfPig" />
   </ItemGroup>
 
   <ItemGroup>

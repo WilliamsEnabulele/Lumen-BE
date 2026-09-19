@@ -61,6 +61,22 @@ Without `ANTHROPIC_API_KEY` set, the server swaps the lesson author, the tutor a
 judge for a deterministic trio. That is a degraded mode so the upload path stays runnable
 offline, not a second implementation — it does not teach, it recites.
 
+## What can be uploaded
+
+`.txt`, `.md`, `.docx`, `.pptx`, `.pdf`.
+
+Everything but PDF is read with the base class library alone — a .docx and a .pptx are zips of
+XML, and an extractor with no dependency cannot fail to restore. PDF is the exception, and
+deliberately: a PDF is a graphics format that happens to contain glyphs, where text is
+positioned rather than flowed and the order in the file is often not the order on the page.
+Half a PDF parser does not fail loudly, it produces plausible scrambled text — which becomes a
+plausible scrambled lesson. So that one borrows [PdfPig](https://github.com/UglyToad/PdfPig).
+
+A PDF with no text layer is refused by name rather than taught from. Photocopied and
+photographed textbooks are everywhere, and building a course out of one produces an empty
+course and no explanation; the message says it looks like a scan and needs OCR first, which is
+a different problem from a document that is simply too thin.
+
 ## Which model does what
 
 Three roles, chosen independently, because they are not the same purchase:

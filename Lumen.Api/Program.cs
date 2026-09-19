@@ -16,6 +16,7 @@ var dataRoot = builder.Configuration["Storage:Root"]
 builder.Services.AddSingleton<IDocumentExtractor, PlainTextExtractor>();
 builder.Services.AddSingleton<IDocumentExtractor, WordExtractor>();
 builder.Services.AddSingleton<IDocumentExtractor, SlidesExtractor>();
+builder.Services.AddSingleton<IDocumentExtractor, PdfExtractor>();
 builder.Services.AddSingleton<DocumentExtractors>();
 builder.Services.AddSingleton<ICourseStore>(_ => new FileCourseStore(dataRoot));
 builder.Services.AddSingleton<IUploadStorage>(_ => new LocalDiskUploadStorage(dataRoot));
