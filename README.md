@@ -46,7 +46,35 @@ dotnet build
 dotnet test
 ```
 
-Requires the .NET 10 SDK. There is nothing to run yet — no API host, no database.
+Requires the .NET 10 SDK.
+
+```bash
+dotnet run --project Lumen.Api      # http://localhost:5299
+```
+
+Without `ANTHROPIC_API_KEY` set, the server swaps the lesson author, the tutor and the answer
+judge for a deterministic trio. That is a degraded mode so the upload path stays runnable
+offline, not a second implementation — it does not teach, it recites.
+
+## The smoke harness
+
+```bash
+export ANTHROPIC_API_KEY=...
+tools/smoke.sh                      # starts the API, teaches a whole lesson, stops it
+```
+
+It uploads a fixture, waits for ingestion, then drives a real session for two dozen turns —
+answering the tutor's questions, one of them wrongly — and prints what the tutor said, what it
+drew, how each answer was marked and what the server ended up believing about the student.
+
+It exists because every bug that has actually shipped here was a bug of connection rather than
+of logic: a reteach path nothing could reach, an assessment layer the tutor could step around
+by declaring itself finished. Unit tests passed through both, because each piece was correct
+on its own. Nothing catches that but running the whole thing and looking at the output.
+
+It asserts on shape, never on prose — that something was drawn, that a check was asked, that an
+answer was marked and left evidence. What the tutor actually says differs every run, and a test
+that asserts on a generation is a test that fails for no reason.
 
 ## Conventions that are not negotiable
 

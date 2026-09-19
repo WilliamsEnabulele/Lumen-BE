@@ -127,6 +127,10 @@ public static class LessonEndpoints
                 conceptComplete = response.ConceptComplete,
                 abandoned,
                 skipped,
+                // The client needs to know a question is hanging: it decides whether the next
+                // thing the student says is an answer or an interruption, and it is the
+                // difference between waiting for them and talking over the pause.
+                awaitingAnswer = session.AwaitingCheckAnswer,
                 complete = session.Complete,
                 lessonTitle = session.CurrentLesson(course.Plan)?.Title ?? lesson.Title,
                 conceptTitle = session.CurrentConcept(course.Plan)?.Title ?? concept.Title,
@@ -249,6 +253,7 @@ public static class LessonEndpoints
         complete = true,
         abandoned = (string?)null,
         skipped = Array.Empty<string>(),
+        awaitingAnswer = false,
         lessonTitle = string.Empty,
         conceptTitle = string.Empty,
         sourceRef = string.Empty,
