@@ -31,6 +31,10 @@ public abstract record CanvasCommand
     /// <summary>
     /// Ignored when serialising because the discriminator above already writes it. Two "tool"
     /// properties on the same object is not a style question — it is an exception at runtime.
+    ///
+    /// The attribute has to be repeated on every override below. It does not carry from an
+    /// abstract member to the concrete ones, so the base being marked here proves nothing
+    /// about the types that are actually serialised.
     /// </summary>
     [JsonIgnore]
     public abstract string Tool { get; }
@@ -39,17 +43,20 @@ public abstract record CanvasCommand
 /// <summary>A line worth leaving up: a definition, a rule, the thing being claimed.</summary>
 public sealed record ShowStatement(string Text) : CanvasCommand
 {
+    [JsonIgnore]
     public override string Tool => CanvasTools.ShowStatement;
 }
 
 /// <summary>Points that arrive one at a time, in step with being said.</summary>
 public sealed record ShowSteps(string? Title, IReadOnlyList<string> Items) : CanvasCommand
 {
+    [JsonIgnore]
     public override string Tool => CanvasTools.ShowSteps;
 }
 
 public sealed record ShowCode(string Language, string Source, int? HighlightLine) : CanvasCommand
 {
+    [JsonIgnore]
     public override string Tool => CanvasTools.ShowCode;
 
     public int LineCount => Source.Split('\n').Length;
@@ -58,6 +65,7 @@ public sealed record ShowCode(string Language, string Source, int? HighlightLine
 /// <summary>Moves the lit line as the explanation walks through code already on the canvas.</summary>
 public sealed record HighlightCode(int Line) : CanvasCommand
 {
+    [JsonIgnore]
     public override string Tool => CanvasTools.HighlightCode;
 }
 
@@ -69,6 +77,7 @@ public sealed record DiagramEdge(string From, string To, string? Label);
 public sealed record ShowDiagram(string? Title, IReadOnlyList<DiagramNode> Nodes, IReadOnlyList<DiagramEdge> Edges)
     : CanvasCommand
 {
+    [JsonIgnore]
     public override string Tool => CanvasTools.ShowDiagram;
 }
 
@@ -76,6 +85,7 @@ public sealed record ChartPoint(string Label, double Value);
 
 public sealed record ShowChart(string Kind, string? Title, IReadOnlyList<ChartPoint> Points) : CanvasCommand
 {
+    [JsonIgnore]
     public override string Tool => CanvasTools.ShowChart;
 
     public static readonly IReadOnlyList<string> Kinds = ["bar", "line", "scatter"];
@@ -83,11 +93,13 @@ public sealed record ShowChart(string Kind, string? Title, IReadOnlyList<ChartPo
 
 public sealed record ShowMath(string Latex, string? Caption) : CanvasCommand
 {
+    [JsonIgnore]
     public override string Tool => CanvasTools.ShowMath;
 }
 
 public sealed record ClearCanvas : CanvasCommand
 {
+    [JsonIgnore]
     public override string Tool => CanvasTools.ClearCanvas;
 }
 
