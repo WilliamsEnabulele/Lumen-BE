@@ -30,6 +30,15 @@ public sealed class TeachingSession : Entity
     /// <summary>Set when the last check came back wrong, so the next turn reteaches.</summary>
     public bool AwaitingReteach { get; set; }
 
+    /// <summary>
+    /// The tutor has said it thinks this concept has landed.
+    ///
+    /// A request to move on, not a move. The model asserting mastery is not evidence of
+    /// mastery — it has no idea what the student can do, only what it has said — so this
+    /// brings the check forward rather than skipping it.
+    /// </summary>
+    public bool TutorSaysReady { get; set; }
+
     /// <summary>Set once a check has been asked, so the next student utterance is read as an answer.</summary>
     public bool AwaitingCheckAnswer { get; set; }
 
@@ -66,6 +75,7 @@ public sealed class TeachingSession : Entity
         TurnsOnConcept = 0;
         AwaitingReteach = false;
         AwaitingCheckAnswer = false;
+        TutorSaysReady = false;
         PendingQuestion = null;
 
         var lesson = CurrentLesson(plan);

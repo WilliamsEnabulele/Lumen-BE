@@ -38,6 +38,16 @@ public sealed class MasteryRecord : Entity
     /// <summary>Times this concept has been taught again after a wrong answer.</summary>
     public int Reteaches { get; set; }
 
+    /// <summary>
+    /// The lesson gave up on this concept and carried on without it.
+    ///
+    /// Recorded rather than hidden. A student moved past something they never got is the single
+    /// most useful thing an instructor can be shown, and the belief number alone does not say
+    /// it — a low belief looks the same whether the concept was abandoned or simply not
+    /// reached yet.
+    /// </summary>
+    public bool MovedOnUnmastered { get; set; }
+
     public bool IsMastered => BayesianMastery.IsMastered(Belief);
 
     public void Record(AnswerJudgement judgement, string question, string answer)

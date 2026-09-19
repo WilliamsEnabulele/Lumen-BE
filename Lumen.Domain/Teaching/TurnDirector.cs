@@ -17,6 +17,15 @@ public static class TurnDirector
     /// </summary>
     public const int TurnsBeforeCheck = 3;
 
+    /// <summary>
+    /// Turns on one concept before the lesson gives up on it and moves on regardless.
+    ///
+    /// A student who never answers cannot be marked, so nothing else here would ever let them
+    /// out — the reteach cap only counts wrong answers. Without this a silent student is stuck
+    /// on one concept until they close the tab.
+    /// </summary>
+    public const int MaxTurnsOnConcept = 12;
+
     public static TutorIntent Decide(TeachingSession session, string? studentSaid)
     {
         ArgumentNullException.ThrowIfNull(session);
@@ -28,9 +37,24 @@ public static class TurnDirector
 
         if (session.AwaitingReteach) return TutorIntent.Reteach;
 
-        if (session.TurnsOnConcept >= TurnsBeforeCheck && !session.AwaitingCheckAnswer)
+        // A check already asked is waiting for an answer. Asking a second one over the top of
+        // the first is how a lesson turns into an interrogation.
+        if (session.AwaitingCheckAnswer) return TutorIntent.Teach;
+
+        // The tutor saying it is done brings the check forward; it does not replace it.
+        if (session.TutorSaysReady || session.TurnsOnConcept >= TurnsBeforeCheck)
             return TutorIntent.CheckUnderstanding;
 
         return TutorIntent.Teach;
+    }
+
+    /// <summary>
+    /// True when this concept has gone on long enough that continuing is not teaching anyone
+    /// anything. The lesson moves on and records that it was never mastered.
+    /// </summary>
+    public static bool HasStalled(TeachingSession session)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        return session.TurnsOnConcept >= MaxTurnsOnConcept;
     }
 }

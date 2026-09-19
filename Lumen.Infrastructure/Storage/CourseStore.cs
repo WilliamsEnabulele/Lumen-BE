@@ -160,6 +160,14 @@ public sealed class InMemorySessionStore : ISessionStore
 public interface IMasteryStore
 {
     MasteryRecord For(Guid studentId, Guid courseId, string conceptKey, string conceptTitle);
+
+    /// <summary>
+    /// The record if there is one, without creating it. Separate from <see cref="For"/> because
+    /// asking whether a student knows something must not leave behind a record saying they were
+    /// asked — a progress report full of untouched concepts is worse than no report.
+    /// </summary>
+    MasteryRecord? Find(Guid studentId, Guid courseId, string conceptKey);
+
     IReadOnlyList<MasteryRecord> ForStudent(Guid studentId, Guid courseId);
     void Save(MasteryRecord record);
 }
@@ -177,6 +185,9 @@ public sealed class InMemoryMasteryStore : IMasteryStore
             ConceptTitle = conceptTitle,
             CreatedAt = DateTimeOffset.UtcNow,
         });
+
+    public MasteryRecord? Find(Guid studentId, Guid courseId, string conceptKey) =>
+        _records.TryGetValue((studentId, courseId, conceptKey), out var record) ? record : null;
 
     public IReadOnlyList<MasteryRecord> ForStudent(Guid studentId, Guid courseId) =>
         _records.Values

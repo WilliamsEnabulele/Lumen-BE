@@ -64,6 +64,17 @@ public static class LessonEndpoints
             // session on — to the next concept, or back into this one from a different angle.
             var marked = await Mark(session, course, said, mastery, judge);
 
+            // A concept that has gone nowhere for long enough is left behind and flagged. The
+            // reteach cap only counts wrong answers, so without this a student who never
+            // answers has no way out of the concept they are on.
+            var abandoned = Abandon(session, course, mastery);
+
+            // Then, on entry only: anything already demonstrated is not taught again.
+            var skipped = ConceptEntry.SkipKnown(
+                session,
+                course.Plan,
+                known => mastery.Find(session.StudentId, course.Id, ConceptKey.From(course.Id, known.Title)));
+
             if (session.Complete)
             {
                 sessions.Save(session);
@@ -100,7 +111,11 @@ public static class LessonEndpoints
             session.PendingQuestion = session.AwaitingCheckAnswer ? response.Said : null;
             if (intent == TutorIntent.Reteach) session.AwaitingReteach = false;
 
-            if (response.ConceptComplete) session.Advance(course.Plan);
+            // The tutor saying the concept has landed is a request to move on, not a move. It
+            // knows what it has said; it does not know what the student can do. So it brings
+            // the check forward — the only thing that leaves a concept is evidence, an explicit
+            // give-up after the reteach cap, or a stall.
+            if (response.ConceptComplete) session.TutorSaysReady = true;
 
             sessions.Save(session);
 
@@ -110,6 +125,8 @@ public static class LessonEndpoints
                 drew = response.Drew.Select(Draw),
                 canvas = session.Canvas.Describe(),
                 conceptComplete = response.ConceptComplete,
+                abandoned,
+                skipped,
                 complete = session.Complete,
                 lessonTitle = session.CurrentLesson(course.Plan)?.Title ?? lesson.Title,
                 conceptTitle = session.CurrentConcept(course.Plan)?.Title ?? concept.Title,
@@ -134,6 +151,7 @@ public static class LessonEndpoints
                 belief = Math.Round(record.Belief, 3),
                 mastered = record.IsMastered,
                 reteaches = record.Reteaches,
+                movedOnUnmastered = record.MovedOnUnmastered,
                 evidence = record.Evidence.Select(item => new
                 {
                     at = item.At,
@@ -179,8 +197,12 @@ public static class LessonEndpoints
                 session.AwaitingReteach = true;
                 break;
 
-            case Adaptation.Advance:
             case Adaptation.MoveOnUnmastered:
+                record.MovedOnUnmastered = true;
+                session.Advance(course.Plan);
+                break;
+
+            case Adaptation.Advance:
                 session.Advance(course.Plan);
                 break;
 
@@ -199,12 +221,34 @@ public static class LessonEndpoints
         return (judgement.Verdict, outcome);
     }
 
+    /// <summary>
+    /// Leaves a stalled concept, flagging it as never mastered. Returns what was left, or null
+    /// when nothing was — which is almost every turn.
+    /// </summary>
+    private static string? Abandon(TeachingSession session, StoredCourse course, IMasteryStore mastery)
+    {
+        if (session.Complete || !TurnDirector.HasStalled(session)) return null;
+
+        var concept = session.CurrentConcept(course.Plan);
+        if (concept is null) return null;
+
+        var record = mastery.For(
+            session.StudentId, course.Id, ConceptKey.From(course.Id, concept.Title), concept.Title);
+        record.MovedOnUnmastered = true;
+        mastery.Save(record);
+
+        session.Advance(course.Plan);
+        return concept.Title;
+    }
+
     private static object Finished(TeachingSession session) => new
     {
         said = string.Empty,
         drew = Array.Empty<object>(),
         conceptComplete = true,
         complete = true,
+        abandoned = (string?)null,
+        skipped = Array.Empty<string>(),
         lessonTitle = string.Empty,
         conceptTitle = string.Empty,
         sourceRef = string.Empty,

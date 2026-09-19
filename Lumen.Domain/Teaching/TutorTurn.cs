@@ -90,15 +90,20 @@ public interface ITutorBrain
 /// Concept completion is a tool call rather than something parsed out of the prose because
 /// "I think it has finished explaining" is not a judgement worth making with a regex — and a
 /// lesson that advances on a false positive skips material the student never heard.
+///
+/// What the call means is deliberately weaker than its name suggests. The tutor knows what it
+/// has said; it does not know what the student can do. So this is a request to move on, and the
+/// answer to a check is what actually grants it.
 /// </summary>
 public static class TutorControlTools
 {
     public const string ConceptTaught = "concept_taught";
 
     public const string ConceptTaughtDescription =
-        "Call this when you judge that the student has what they need on the current concept and "
-        + "you are ready to move to the next one. Say your last sentence on it in the same turn. Do "
-        + "not call it just because you have spoken a few times — call it when the idea has landed.";
+        "Call this when you think the student has what they need on the current concept. It does "
+        + "not end the concept — it brings forward the question that checks whether you are right, "
+        + "and they move on when they answer it well. Say your last sentence on the concept in the "
+        + "same turn. Do not call it just because you have spoken a few times.";
 
     public const string ConceptTaughtSchema =
         """{"type":"object","properties":{},"additionalProperties":false}""";

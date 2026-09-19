@@ -84,6 +84,52 @@ public class TurnDirectorTests
     }
 
     [Fact]
+    public void The_tutor_saying_it_is_done_brings_the_check_forward_rather_than_skipping_it()
+    {
+        // The whole point of the flag. The model knows what it has said, not what the student
+        // can do, so its confidence buys an early question and nothing else.
+        var session = new TeachingSession { TurnsOnConcept = 1, TutorSaysReady = true };
+
+        Assert.Equal(TutorIntent.CheckUnderstanding, TurnDirector.Decide(session, null));
+    }
+
+    [Fact]
+    public void A_tutor_who_says_it_is_done_still_waits_for_the_answer_it_asked_for()
+    {
+        var session = new TeachingSession { TutorSaysReady = true, AwaitingCheckAnswer = true };
+
+        Assert.Equal(TutorIntent.Teach, TurnDirector.Decide(session, null));
+    }
+
+    [Fact]
+    public void Advancing_forgets_that_the_tutor_thought_it_was_done()
+    {
+        var plan = Plan();
+        var session = new TeachingSession { TutorSaysReady = true };
+
+        session.Advance(plan);
+
+        Assert.False(session.TutorSaysReady);
+    }
+
+    [Fact]
+    public void A_concept_stalls_only_once_it_has_gone_on_far_too_long()
+    {
+        Assert.False(TurnDirector.HasStalled(
+            new TeachingSession { TurnsOnConcept = TurnDirector.MaxTurnsOnConcept - 1 }));
+
+        Assert.True(TurnDirector.HasStalled(
+            new TeachingSession { TurnsOnConcept = TurnDirector.MaxTurnsOnConcept }));
+    }
+
+    [Fact]
+    public void A_stall_takes_far_longer_than_a_check()
+    {
+        // If these ever cross, the concept is abandoned before it is ever assessed.
+        Assert.True(TurnDirector.MaxTurnsOnConcept > TurnDirector.TurnsBeforeCheck);
+    }
+
+    [Fact]
     public void Only_the_tutors_turns_count_toward_a_check()
     {
         var session = new TeachingSession();
