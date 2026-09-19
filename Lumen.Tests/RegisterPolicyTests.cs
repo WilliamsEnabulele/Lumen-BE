@@ -1,4 +1,3 @@
-using Lumen.Domain.Scripts;
 using Lumen.Domain.Teaching;
 
 namespace Lumen.Tests;
@@ -23,22 +22,15 @@ public class RegisterPolicyTests
         AudioKeys = ["interjections/na-so/take-1", "interjections/na-so/take-2"]
     };
 
-    private static ScriptNode Node(
-        ScriptNodeKind kind = ScriptNodeKind.Speech,
-        bool carriesDefinition = false) => new()
-    {
-        Kind = kind,
-        CarriesDefinition = carriesDefinition,
-        Text = "Every turn of the outer loop runs the whole inner one."
-    };
-
     private static InterjectionDecision Decide(
         RegisterLevel level,
-        ScriptNode? node = null,
+        bool isAssessment = false,
+        bool carriesDefinition = false,
         Interjection? interjection = null,
         TimeSpan? since = null,
-        bool nodeAlreadyCarriesOne = false) =>
-        RegisterPolicy.Decide(level, node ?? Node(), interjection ?? NaSo(), since ?? LongEnough, nodeAlreadyCarriesOne);
+        bool alreadyCarriesOne = false) =>
+        RegisterPolicy.Decide(
+            level, isAssessment, carriesDefinition, interjection ?? NaSo(), since ?? LongEnough, alreadyCarriesOne);
 
     [Fact]
     public void A_student_on_standard_english_never_hears_one()
@@ -54,7 +46,7 @@ public class RegisterPolicyTests
     public void Never_during_an_assessment_item()
     {
         // A formal question asked in an informal register changes what is being asked.
-        var decision = Decide(RegisterLevel.ComfortableCodeSwitch, Node(ScriptNodeKind.CheckForUnderstanding));
+        var decision = Decide(RegisterLevel.ComfortableCodeSwitch, isAssessment: true);
 
         Assert.False(decision.Allowed);
         Assert.NotNull(decision.Refusal);
@@ -65,7 +57,7 @@ public class RegisterPolicyTests
     public void Never_inside_a_technical_definition()
     {
         // The student is examined in standard English, so the terms stay precise.
-        var decision = Decide(RegisterLevel.ComfortableCodeSwitch, Node(carriesDefinition: true));
+        var decision = Decide(RegisterLevel.ComfortableCodeSwitch, carriesDefinition: true);
 
         Assert.False(decision.Allowed);
         Assert.NotNull(decision.Refusal);
@@ -75,7 +67,7 @@ public class RegisterPolicyTests
     [Fact]
     public void Never_twice_in_the_same_breath()
     {
-        var decision = Decide(RegisterLevel.ComfortableCodeSwitch, nodeAlreadyCarriesOne: true);
+        var decision = Decide(RegisterLevel.ComfortableCodeSwitch, alreadyCarriesOne: true);
 
         Assert.False(decision.Allowed);
         Assert.NotNull(decision.Refusal);

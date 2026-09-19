@@ -1,5 +1,7 @@
 using System.Collections.Concurrent;
+using Lumen.Domain.Courses;
 using Lumen.Domain.Ingestion;
+using Lumen.Domain.Teaching;
 using Lumen.Infrastructure.Extraction;
 using Lumen.Infrastructure.Storage;
 using Microsoft.Extensions.Logging;
@@ -9,17 +11,17 @@ namespace Lumen.Infrastructure.Ingestion;
 /// <summary>
 /// Upload to teachable, one stage at a time.
 ///
-/// The stages are visible to the student because the wait is real — reading a document and
-/// working out what it teaches takes as long as it takes, and a progress bar that invents a
-/// percentage is a lie a student catches. Each stage is recorded as it is entered, so a run
-/// that dies is known to have died in extraction rather than simply stopping.
+/// The stages are visible to the student because the wait is real — a model reading a document
+/// and working out what it teaches takes as long as it takes, and a progress bar that invents a
+/// percentage is a lie a student catches.
 ///
 /// Work runs on a background task here. In production it belongs on a durable queue, so a
-/// process restart resumes an ingestion instead of losing it — the stage on
+/// process restart resumes an ingestion instead of losing it; the stage on
 /// <see cref="SourceDocument"/> is already the resume point that needs.
 /// </summary>
 public sealed class IngestionPipeline(
     DocumentExtractors extractors,
+    ILessonAuthor author,
     ICourseStore courses,
     IUploadStorage uploads,
     ILogger<IngestionPipeline> logger)
@@ -47,17 +49,14 @@ public sealed class IngestionPipeline(
         };
 
         _documents[document.Id] = document;
-        _ = Task.Run(() => Run(tenantId, document));
+        _ = Task.Run(() => RunAsync(document));
         return document;
     }
 
     public SourceDocument? Status(Guid documentId) =>
         _documents.TryGetValue(documentId, out var document) ? document : null;
 
-    public SourceDocument? ForCourse(Guid courseId) =>
-        _documents.Values.FirstOrDefault(document => document.CourseId == courseId);
-
-    private void Run(Guid tenantId, SourceDocument document)
+    private async Task RunAsync(SourceDocument document)
     {
         try
         {
@@ -79,26 +78,31 @@ public sealed class IngestionPipeline(
             }
 
             document.Stage = IngestionStage.Structuring;
-            var composed = LessonComposer.Compose(tenantId, extracted);
+            var plan = await author.AuthorAsync(extracted);
 
-            if (composed.ScriptNodes.Count == 0)
+            if (plan.ConceptCount == 0)
             {
                 Fail(document, "There was not enough in that document to teach from.");
                 return;
             }
 
             document.Stage = IngestionStage.WritingScript;
-            composed.Course.Id = document.CourseId;
-            foreach (var module in composed.Modules) module.CourseId = document.CourseId;
-            foreach (var lesson in composed.Lessons) lesson.CourseId = document.CourseId;
-            foreach (var concept in composed.Concepts) concept.CourseId = document.CourseId;
 
-            courses.Save(composed);
+            // A plan whose prerequisites form a cycle cannot be taught in any order, and would
+            // mis-teach everyone who took it. Better to refuse the upload than to publish one.
+            if (CycleIn(plan) is { } cycle)
+            {
+                Fail(document, $"The lesson plan doubles back on itself around “{cycle}”. Try uploading again.");
+                logger.LogWarning("Authored plan for {CourseId} contained a prerequisite cycle.", document.CourseId);
+                return;
+            }
+
+            courses.Save(new StoredCourse(document.CourseId, plan, author.Name, DateTimeOffset.UtcNow));
             document.Stage = IngestionStage.Ready;
 
             logger.LogInformation(
-                "Ingested {Words} words into {Lessons} lessons and {Nodes} script nodes for course {CourseId}.",
-                extracted.WordCount, composed.Lessons.Count, composed.ScriptNodes.Count, document.CourseId);
+                "{Author} turned {Words} words into {Lessons} lessons and {Concepts} concepts for course {CourseId}.",
+                author.Name, extracted.WordCount, plan.Lessons.Count, plan.ConceptCount, document.CourseId);
         }
         catch (Exception exception) when (exception is InvalidDataException or IOException)
         {
@@ -110,6 +114,24 @@ public sealed class IngestionPipeline(
             Fail(document, "Something went wrong turning that document into a lesson.");
             logger.LogError(exception, "Ingestion failed for document {DocumentId}.", document.Id);
         }
+    }
+
+    /// <summary>Returns the title of a concept caught in a cycle, or null when the plan is sound.</summary>
+    internal static string? CycleIn(LessonPlan plan)
+    {
+        foreach (var lesson in plan.Lessons)
+        {
+            var titles = lesson.Concepts.Select(concept => concept.Title).ToArray();
+            var prerequisites = lesson.Concepts.ToDictionary(
+                concept => concept.Title,
+                concept => (IReadOnlyList<string>)concept.Prerequisites.ToArray(),
+                StringComparer.Ordinal);
+
+            var ordering = PrerequisiteGraph.Order(titles, prerequisites);
+            if (ordering.HasCycle) return ordering.CyclicConceptKeys[0];
+        }
+
+        return null;
     }
 
     private static void Fail(SourceDocument document, string reason)

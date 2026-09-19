@@ -18,6 +18,7 @@ builder.Services.AddSingleton<IDocumentExtractor, SlidesExtractor>();
 builder.Services.AddSingleton<DocumentExtractors>();
 builder.Services.AddSingleton<ICourseStore>(_ => new FileCourseStore(dataRoot));
 builder.Services.AddSingleton<IUploadStorage>(_ => new LocalDiskUploadStorage(dataRoot));
+builder.Services.AddSingleton<ISessionStore, InMemorySessionStore>();
 builder.Services.AddSingleton<IngestionPipeline>();
 
 // The AI layer. Reading the document and teaching from it are both model work; the

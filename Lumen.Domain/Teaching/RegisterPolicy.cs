@@ -1,5 +1,3 @@
-using Lumen.Domain.Scripts;
-
 namespace Lumen.Domain.Teaching;
 
 /// <summary>
@@ -23,14 +21,16 @@ public static class RegisterPolicy
     /// </summary>
     public static readonly TimeSpan MinimumGap = TimeSpan.FromSeconds(90);
 
+    /// <param name="isAssessment">True when the tutor is asking the student something.</param>
+    /// <param name="carriesDefinition">True when the words state a technical term precisely.</param>
     public static InterjectionDecision Decide(
         RegisterLevel level,
-        ScriptNode node,
+        bool isAssessment,
+        bool carriesDefinition,
         Interjection interjection,
         TimeSpan sinceLastInterjection,
-        bool nodeAlreadyCarriesOne)
+        bool alreadyCarriesOne)
     {
-        ArgumentNullException.ThrowIfNull(node);
         ArgumentNullException.ThrowIfNull(interjection);
 
         if (level == RegisterLevel.StandardEnglish)
@@ -40,16 +40,16 @@ public static class RegisterPolicy
             return InterjectionDecision.No(
                 $"{interjection.Function} needs register level {interjection.MinimumLevel}; this student is at {level}.");
 
-        if (node.IsAssessment)
+        if (isAssessment)
             return InterjectionDecision.No(
                 "Never during an assessment item. A formal question asked in an informal register changes what is being asked.");
 
-        if (node.CarriesDefinition)
+        if (carriesDefinition)
             return InterjectionDecision.No(
                 "Never inside a technical definition. The student is examined in standard English, so the terms stay precise.");
 
-        if (nodeAlreadyCarriesOne)
-            return InterjectionDecision.No("This node already carries one. Two in a breath is a performance.");
+        if (alreadyCarriesOne)
+            return InterjectionDecision.No("This turn already carries one. Two in a breath is a performance.");
 
         if (sinceLastInterjection < MinimumGap)
             return InterjectionDecision.No(

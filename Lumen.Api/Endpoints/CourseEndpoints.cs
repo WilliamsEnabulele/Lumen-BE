@@ -8,16 +8,12 @@ namespace Lumen.Api.Endpoints;
 public static class CourseEndpoints
 {
     /// <summary>
-    /// Until there is authentication, everything belongs to one tenant. The column is already
-    /// on every row, so switching this for a real claim is a one-line change rather than a
-    /// migration through the schema.
+    /// Until there is authentication, everything belongs to one tenant. The column is already on
+    /// every row, so switching this for a real claim is a one-line change rather than a migration.
     /// </summary>
     private static readonly Guid DefaultTenant = Guid.Parse("0197b9c2-0000-7000-8000-000000000001");
 
-    /// <summary>
-    /// A ceiling on upload size. Generous for a chapter or a deck, and low enough that a
-    /// mis-drop does not fill the disk.
-    /// </summary>
+    /// <summary>Generous for a chapter or a deck, low enough that a mis-drop does not fill the disk.</summary>
     private const long MaxUploadBytes = 32 * 1024 * 1024;
 
     public static void MapCourseEndpoints(this WebApplication app)
@@ -61,25 +57,34 @@ public static class CourseEndpoints
         app.MapGet("/api/courses", (ICourseStore store) => Results.Ok(store.List().Select(course => new
         {
             id = course.Id,
-            title = course.Title,
+            title = course.Plan.CourseTitle,
+            summary = course.Plan.Summary,
+            authoredBy = course.AuthoredBy,
             createdAt = course.CreatedAt,
         })));
 
         app.MapGet("/api/courses/{courseId:guid}", (Guid courseId, ICourseStore store) =>
         {
-            var composed = store.Find(courseId);
-            if (composed is null) return Results.NotFound();
+            var course = store.Find(courseId);
+            if (course is null) return Results.NotFound();
 
             return Results.Ok(new
             {
-                id = composed.Course.Id,
-                title = composed.Course.Title,
-                lessons = composed.Lessons.OrderBy(lesson => lesson.Ordinal).Select(lesson => new
+                id = course.Id,
+                title = course.Plan.CourseTitle,
+                summary = course.Plan.Summary,
+                authoredBy = course.AuthoredBy,
+                lessons = course.Plan.Lessons.Select(lesson => new
                 {
-                    id = lesson.Id,
                     title = lesson.Title,
-                    ordinal = lesson.Ordinal,
-                    nodeCount = composed.ScriptFor(lesson.Id).Count,
+                    objective = lesson.Objective,
+                    concepts = lesson.Concepts.Select(concept => new
+                    {
+                        title = concept.Title,
+                        intent = concept.TeachingIntent,
+                        prerequisites = concept.Prerequisites,
+                        sourceRef = concept.SourceRef,
+                    }),
                 }),
             });
         });

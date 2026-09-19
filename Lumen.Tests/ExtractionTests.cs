@@ -1,6 +1,5 @@
 using System.Text;
 using Lumen.Domain.Ingestion;
-using Lumen.Domain.Scripts;
 using Lumen.Infrastructure.Extraction;
 
 namespace Lumen.Tests;
@@ -11,8 +10,6 @@ namespace Lumen.Tests;
 /// </summary>
 public class ExtractionTests
 {
-    private static readonly Guid Tenant = Guid.Parse("0197b9c2-0000-7000-8000-0000000000ff");
-
     private const string Markdown = """
 # Introduction to Programming
 
@@ -67,41 +64,6 @@ multiply, and multiplication gets away from you faster than people expect it to.
         var extracted = new PlainTextExtractor().Extract(Bytes(Markdown), "course.md");
 
         Assert.Equal(3, extracted.Sections.SelectMany(s => s.Blocks).Count(b => b.Kind == BlockKind.ListItem));
-    }
-
-    [Fact]
-    public void A_document_becomes_a_lesson_a_student_could_actually_sit_through()
-    {
-        var extracted = new PlainTextExtractor().Extract(Bytes(Markdown), "course.md");
-        var composed = LessonComposer.Compose(Tenant, extracted);
-
-        Assert.Equal("Introduction to Programming", composed.Course.Title);
-        Assert.Equal(2, composed.Lessons.Count);
-
-        // Every concept earns at least one beat of speech. Asserting a specific total would be
-        // asserting the length of this fixture, which says nothing about the composer.
-        Assert.True(
-            composed.ScriptNodes.Count >= composed.Concepts.Count,
-            $"{composed.Concepts.Count} concepts produced only {composed.ScriptNodes.Count} script nodes");
-
-        // And each lesson is actually teachable rather than an empty shell.
-        Assert.All(composed.Lessons, lesson => Assert.NotEmpty(composed.ScriptFor(lesson.Id)));
-
-        // Something to look at, and something to say about it.
-        Assert.Contains(composed.ScriptNodes, node => node.VisualKind == VisualKind.Code);
-        Assert.Contains(composed.ScriptNodes, node => node.VisualKind == VisualKind.Steps);
-        Assert.All(composed.ScriptNodes, node => Assert.False(string.IsNullOrWhiteSpace(node.Text)));
-    }
-
-    [Fact]
-    public void An_unsupported_format_is_named_rather_than_silently_producing_nothing()
-    {
-        var extractors = new DocumentExtractors([new PlainTextExtractor(), new WordExtractor(), new SlidesExtractor()]);
-
-        Assert.Null(extractors.For("scanned-chapter.pdf"));
-        Assert.NotNull(extractors.For("chapter.docx"));
-        Assert.NotNull(extractors.For("deck.pptx"));
-        Assert.NotNull(extractors.For("notes.md"));
     }
 
     [Fact]

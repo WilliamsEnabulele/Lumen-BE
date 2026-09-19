@@ -1,39 +1,40 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using Lumen.Domain.Courses;
-using Lumen.Domain.Ingestion;
+using Lumen.Domain.Teaching;
 
 namespace Lumen.Infrastructure.Storage;
 
+/// <param name="AuthoredBy">
+/// Which author produced this plan, recorded with the course. A plan written by a model and one
+/// written by the deterministic fallback are not the same artefact, and a reviewer needs to
+/// know which they are looking at.
+/// </param>
+public sealed record StoredCourse(Guid Id, LessonPlan Plan, string AuthoredBy, DateTimeOffset CreatedAt);
+
 public interface ICourseStore
 {
-    void Save(ComposedCourse composed);
-    ComposedCourse? Find(Guid courseId);
-    IReadOnlyList<Course> List();
+    void Save(StoredCourse course);
+    StoredCourse? Find(Guid courseId);
+    IReadOnlyList<StoredCourse> List();
 }
 
 /// <summary>
-/// Composed courses, written as JSON next to the uploads.
+/// Courses on disk as JSON.
 ///
-/// This is the same bargain Registraa struck with local disk storage: a flow nobody can run is
-/// a flow nobody checks, and requiring a database before anyone can see a document become a
-/// lesson would make the interesting part of this system the part nobody exercises.
-///
-/// It is explicitly the first implementation, not the last. Relational storage arrives with
-/// the EF model and its migrations — sessions, mastery and assessment attempts all want rows
-/// and indexes, and none of them want to be a JSON blob.
+/// Still the first implementation, not the last: sessions, mastery and assessment attempts all
+/// want rows and indexes. A lesson plan, though, is genuinely a document — it is read whole and
+/// written whole — so this one may well survive the move to a database.
 /// </summary>
 public sealed class FileCourseStore : ICourseStore
 {
     private static readonly JsonSerializerOptions Json = new()
     {
-        WriteIndented = false,
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         Converters = { new JsonStringEnumConverter() },
     };
 
-    private readonly ConcurrentDictionary<Guid, ComposedCourse> _courses = new();
+    private readonly ConcurrentDictionary<Guid, StoredCourse> _courses = new();
     private readonly string _root;
 
     public FileCourseStore(string root)
@@ -43,26 +44,24 @@ public sealed class FileCourseStore : ICourseStore
         Rehydrate();
     }
 
-    public void Save(ComposedCourse composed)
+    public void Save(StoredCourse course)
     {
-        ArgumentNullException.ThrowIfNull(composed);
-        _courses[composed.Course.Id] = composed;
+        ArgumentNullException.ThrowIfNull(course);
+        _courses[course.Id] = course;
 
-        // Written to a temporary file and moved into place: a process that dies mid-write
-        // leaves the previous course intact rather than a half-parsed one.
-        var path = Path.Combine(_root, $"{composed.Course.Id}.json");
+        // Written aside and moved into place, so a process that dies mid-write leaves the
+        // previous course intact rather than a half-parsed one.
+        var path = Path.Combine(_root, $"{course.Id}.json");
         var staging = path + ".tmp";
-        File.WriteAllText(staging, JsonSerializer.Serialize(composed, Json));
+        File.WriteAllText(staging, JsonSerializer.Serialize(course, Json));
         File.Move(staging, path, overwrite: true);
     }
 
-    public ComposedCourse? Find(Guid courseId) =>
-        _courses.TryGetValue(courseId, out var composed) ? composed : null;
+    public StoredCourse? Find(Guid courseId) =>
+        _courses.TryGetValue(courseId, out var course) ? course : null;
 
-    public IReadOnlyList<Course> List() =>
-        _courses.Values.Select(composed => composed.Course)
-            .OrderByDescending(course => course.CreatedAt)
-            .ToArray();
+    public IReadOnlyList<StoredCourse> List() =>
+        _courses.Values.OrderByDescending(course => course.CreatedAt).ToArray();
 
     private void Rehydrate()
     {
@@ -70,13 +69,13 @@ public sealed class FileCourseStore : ICourseStore
         {
             try
             {
-                var composed = JsonSerializer.Deserialize<ComposedCourse>(File.ReadAllText(path), Json);
-                if (composed is not null) _courses[composed.Course.Id] = composed;
+                var course = JsonSerializer.Deserialize<StoredCourse>(File.ReadAllText(path), Json);
+                if (course is not null) _courses[course.Id] = course;
             }
             catch (JsonException)
             {
-                // A course we cannot read is not a reason to refuse to start. It will be
-                // reported as missing, which is the truth, and can be re-ingested.
+                // A course we cannot read is not a reason to refuse to start. It reports as
+                // missing, which is the truth, and can be re-ingested.
             }
         }
     }
@@ -84,17 +83,14 @@ public sealed class FileCourseStore : ICourseStore
 
 public interface IUploadStorage
 {
-    /// <summary>Returns the opaque key the bytes were written under.</summary>
     string Save(Guid courseId, string fileName, Stream content);
-
     Stream Open(string objectKey);
 }
 
 /// <summary>
-/// Uploads on local disk.
-///
-/// Keys are opaque and carry no file name, because keys reach logs, metrics and error reports,
-/// and a key reading "adaeze-okonkwo-thesis.docx" leaks everywhere the key travels.
+/// Uploads on local disk. Keys are opaque and carry no file name, because keys reach logs,
+/// metrics and error reports, and a key reading "adaeze-okonkwo-thesis.docx" leaks everywhere
+/// the key travels.
 /// </summary>
 public sealed class LocalDiskUploadStorage : IUploadStorage
 {
@@ -124,4 +120,31 @@ public sealed class LocalDiskUploadStorage : IUploadStorage
         var path = Path.Combine(_root, objectKey.Replace('/', Path.DirectorySeparatorChar));
         return File.OpenRead(path);
     }
+}
+
+/// <summary>
+/// Live teaching sessions.
+///
+/// In memory, deliberately, for now: a session is a conversation in progress, and the thing
+/// that must survive a restart is the position in the plan, not the transcript. Persisting it
+/// is the same work as persisting mastery, and belongs in the same change.
+/// </summary>
+public interface ISessionStore
+{
+    void Save(TeachingSession session);
+    TeachingSession? Find(Guid sessionId);
+}
+
+public sealed class InMemorySessionStore : ISessionStore
+{
+    private readonly ConcurrentDictionary<Guid, TeachingSession> _sessions = new();
+
+    public void Save(TeachingSession session)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        _sessions[session.Id] = session;
+    }
+
+    public TeachingSession? Find(Guid sessionId) =>
+        _sessions.TryGetValue(sessionId, out var session) ? session : null;
 }
