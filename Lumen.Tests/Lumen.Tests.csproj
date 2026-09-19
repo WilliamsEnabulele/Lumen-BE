@@ -17,6 +17,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Lumen.Domain\Lumen.Domain.csproj" />
+    <ProjectReference Include="..\Lumen.Infrastructure\Lumen.Infrastructure.csproj" />
   </ItemGroup>
 
 </Project>

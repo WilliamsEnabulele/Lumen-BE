@@ -1,4 +1,6 @@
 <Solution>
+  <Project Path="Lumen.Api/Lumen.Api.csproj" />
   <Project Path="Lumen.Domain/Lumen.Domain.csproj" />
+  <Project Path="Lumen.Infrastructure/Lumen.Infrastructure.csproj" />
   <Project Path="Lumen.Tests/Lumen.Tests.csproj" />
 </Solution>

@@ -10,3 +10,4 @@ TestResults/
 .vs/
 .idea/
 .vscode/
+.local-storage/

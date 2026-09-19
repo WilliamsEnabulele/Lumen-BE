@@ -49,6 +49,15 @@ public sealed class ScriptNode : Entity
     /// <summary>What the canvas shows during this node: a diagram, a code sample, a simulation.</summary>
     public string? VisualRef { get; set; }
 
+    /// <summary>
+    /// How the canvas moves while this node is spoken. Animated against the utterance offset,
+    /// so an interrupted node resumes its illustration at the same frame rather than restarting.
+    /// </summary>
+    public VisualKind VisualKind { get; set; } = VisualKind.None;
+
+    /// <summary>Read according to <see cref="VisualKind"/>. See <see cref="VisualSpec"/>.</summary>
+    public string? VisualPayload { get; set; }
+
     /// <summary>Where in the source document this came from. Generated content stays traceable.</summary>
     public string? SourceRef { get; set; }
 
