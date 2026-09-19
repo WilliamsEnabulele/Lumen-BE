@@ -1,5 +1,8 @@
 using System.Text.Json.Serialization;
+using Anthropic;
 using Lumen.Api.Endpoints;
+using Lumen.Domain.Teaching;
+using Lumen.Infrastructure.Ai;
 using Lumen.Infrastructure.Extraction;
 using Lumen.Infrastructure.Ingestion;
 using Lumen.Infrastructure.Storage;
@@ -16,6 +19,25 @@ builder.Services.AddSingleton<DocumentExtractors>();
 builder.Services.AddSingleton<ICourseStore>(_ => new FileCourseStore(dataRoot));
 builder.Services.AddSingleton<IUploadStorage>(_ => new LocalDiskUploadStorage(dataRoot));
 builder.Services.AddSingleton<IngestionPipeline>();
+
+// The AI layer. Reading the document and teaching from it are both model work; the
+// deterministic pair behind them is a degraded mode that keeps the upload path runnable
+// without a key, not a second implementation of the product.
+var ai = builder.Configuration.GetSection(AnthropicOptions.Section).Get<AnthropicOptions>() ?? new AnthropicOptions();
+ai.ApiKey ??= builder.Configuration["Ai:ApiKey"] ?? Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY");
+builder.Services.AddSingleton(ai);
+
+if (ai.IsConfigured)
+{
+    builder.Services.AddSingleton(_ => new AnthropicClient { ApiKey = ai.ApiKey });
+    builder.Services.AddSingleton<ILessonAuthor, AnthropicLessonAuthor>();
+    builder.Services.AddSingleton<ITutorBrain, AnthropicTutorBrain>();
+}
+else
+{
+    builder.Services.AddSingleton<ILessonAuthor, DeterministicLessonAuthor>();
+    builder.Services.AddSingleton<ITutorBrain, ScriptedTutorBrain>();
+}
 
 builder.Services.ConfigureHttpJsonOptions(options =>
 {
