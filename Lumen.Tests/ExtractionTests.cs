@@ -76,8 +76,16 @@ multiply, and multiplication gets away from you faster than people expect it to.
         var composed = LessonComposer.Compose(Tenant, extracted);
 
         Assert.Equal("Introduction to Programming", composed.Course.Title);
-        Assert.True(composed.Lessons.Count >= 2);
-        Assert.True(composed.ScriptNodes.Count >= 4);
+        Assert.Equal(2, composed.Lessons.Count);
+
+        // Every concept earns at least one beat of speech. Asserting a specific total would be
+        // asserting the length of this fixture, which says nothing about the composer.
+        Assert.True(
+            composed.ScriptNodes.Count >= composed.Concepts.Count,
+            $"{composed.Concepts.Count} concepts produced only {composed.ScriptNodes.Count} script nodes");
+
+        // And each lesson is actually teachable rather than an empty shell.
+        Assert.All(composed.Lessons, lesson => Assert.NotEmpty(composed.ScriptFor(lesson.Id)));
 
         // Something to look at, and something to say about it.
         Assert.Contains(composed.ScriptNodes, node => node.VisualKind == VisualKind.Code);
