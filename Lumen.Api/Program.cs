@@ -1,6 +1,7 @@
 using System.Text.Json.Serialization;
 using Anthropic;
 using Lumen.Api.Endpoints;
+using Lumen.Domain.Assessment;
 using Lumen.Domain.Teaching;
 using Lumen.Infrastructure.Ai;
 using Lumen.Infrastructure.Extraction;
@@ -19,6 +20,7 @@ builder.Services.AddSingleton<DocumentExtractors>();
 builder.Services.AddSingleton<ICourseStore>(_ => new FileCourseStore(dataRoot));
 builder.Services.AddSingleton<IUploadStorage>(_ => new LocalDiskUploadStorage(dataRoot));
 builder.Services.AddSingleton<ISessionStore, InMemorySessionStore>();
+builder.Services.AddSingleton<IMasteryStore, InMemoryMasteryStore>();
 builder.Services.AddSingleton<IngestionPipeline>();
 
 // The AI layer. Reading the document and teaching from it are both model work; the
@@ -33,11 +35,13 @@ if (ai.IsConfigured)
     builder.Services.AddSingleton(_ => new AnthropicClient { ApiKey = ai.ApiKey });
     builder.Services.AddSingleton<ILessonAuthor, AnthropicLessonAuthor>();
     builder.Services.AddSingleton<ITutorBrain, AnthropicTutorBrain>();
+    builder.Services.AddSingleton<IAnswerJudge, AnthropicAnswerJudge>();
 }
 else
 {
     builder.Services.AddSingleton<ILessonAuthor, DeterministicLessonAuthor>();
     builder.Services.AddSingleton<ITutorBrain, ScriptedTutorBrain>();
+    builder.Services.AddSingleton<IAnswerJudge, UnjudgedAnswers>();
 }
 
 builder.Services.ConfigureHttpJsonOptions(options =>

@@ -1,4 +1,6 @@
+using Lumen.Domain.Assessment;
 using Lumen.Domain.Canvas;
+using Lumen.Domain.Courses;
 using Lumen.Domain.Teaching;
 using Lumen.Infrastructure.Storage;
 
@@ -12,11 +14,13 @@ public sealed record TurnRequest(string? Said);
 /// Teaching, one turn at a time.
 ///
 /// A turn is a request because a conversation is: the student says something or says nothing,
-/// and the tutor answers. Nothing is prepared in advance beyond the plan, which is the whole
-/// point — a tutor reading ahead cannot react to the person in front of it.
+/// and the tutor answers. Nothing is prepared in advance beyond the plan.
 /// </summary>
 public static class LessonEndpoints
 {
+    /// <summary>Until there is authentication, every session belongs to the same student.</summary>
+    private static readonly Guid DefaultStudent = Guid.Parse("0197b9c2-0000-7000-8000-000000000002");
+
     public static void MapLessonEndpoints(this WebApplication app)
     {
         app.MapPost("/api/sessions", (StartSessionRequest request, ICourseStore courses, ISessionStore sessions) =>
@@ -26,14 +30,25 @@ public static class LessonEndpoints
             if (course.Plan.Lessons.Count == 0)
                 return Results.BadRequest(new { error = "That course has no lessons to teach." });
 
-            var session = new TeachingSession { CourseId = course.Id, CreatedAt = DateTimeOffset.UtcNow };
+            var session = new TeachingSession
+            {
+                CourseId = course.Id,
+                StudentId = DefaultStudent,
+                CreatedAt = DateTimeOffset.UtcNow,
+            };
             sessions.Save(session);
 
             return Results.Ok(Describe(session, course));
         });
 
-        app.MapPost("/api/sessions/{sessionId:guid}/turn",
-            async (Guid sessionId, TurnRequest request, ICourseStore courses, ISessionStore sessions, ITutorBrain brain) =>
+        app.MapPost("/api/sessions/{sessionId:guid}/turn", async (
+            Guid sessionId,
+            TurnRequest request,
+            ICourseStore courses,
+            ISessionStore sessions,
+            IMasteryStore mastery,
+            IAnswerJudge judge,
+            ITutorBrain brain) =>
         {
             var session = sessions.Find(sessionId);
             if (session is null) return Results.NotFound();
@@ -41,8 +56,19 @@ public static class LessonEndpoints
             var course = courses.Find(session.CourseId);
             if (course is null) return Results.NotFound();
 
+            if (session.Complete) return Results.Ok(Finished(session));
+
+            var said = string.IsNullOrWhiteSpace(request.Said) ? null : request.Said.Trim();
+
+            // A pending check is marked before anything else, because the answer can move the
+            // session on — to the next concept, or back into this one from a different angle.
+            var marked = await Mark(session, course, said, mastery, judge);
+
             if (session.Complete)
-                return Results.Ok(new { said = string.Empty, drew = Array.Empty<object>(), complete = true });
+            {
+                sessions.Save(session);
+                return Results.Ok(Finished(session));
+            }
 
             var concept = session.CurrentConcept(course.Plan);
             var lesson = session.CurrentLesson(course.Plan);
@@ -50,13 +76,15 @@ public static class LessonEndpoints
             {
                 session.Complete = true;
                 sessions.Save(session);
-                return Results.Ok(new { said = string.Empty, drew = Array.Empty<object>(), complete = true });
+                return Results.Ok(Finished(session));
             }
 
-            var said = string.IsNullOrWhiteSpace(request.Said) ? null : request.Said.Trim();
             if (said is not null) session.Record(TutorTurn.FromStudent(said));
 
-            var intent = TurnDirector.Decide(session, said);
+            // An utterance already consumed as a check answer is not also an interruption.
+            // Passing it on would have the tutor respond to it conversationally instead of
+            // reteaching — which is how the reteach path became unreachable in the first place.
+            var intent = TurnDirector.Decide(session, marked is null ? said : null);
 
             var context = new TutorContext(
                 course.Plan.CourseTitle, lesson, concept, session.Canvas, session.Register, session.History);
@@ -66,9 +94,10 @@ public static class LessonEndpoints
             if (!string.IsNullOrWhiteSpace(response.Said)) session.Record(TutorTurn.FromTutor(response.Said));
             foreach (var command in response.Drew) session.Canvas = session.Canvas.Apply(command);
 
-            // A check asked is a check waiting for an answer; the next thing the student says
-            // is read as one rather than as an interruption.
+            // A check asked is a check waiting for an answer, and the question is kept so the
+            // answer is marked against what was actually asked.
             session.AwaitingCheckAnswer = intent == TutorIntent.CheckUnderstanding;
+            session.PendingQuestion = session.AwaitingCheckAnswer ? response.Said : null;
             if (intent == TutorIntent.Reteach) session.AwaitingReteach = false;
 
             if (response.ConceptComplete) session.Advance(course.Plan);
@@ -86,9 +115,102 @@ public static class LessonEndpoints
                 conceptTitle = session.CurrentConcept(course.Plan)?.Title ?? concept.Title,
                 sourceRef = concept.SourceRef,
                 tutor = brain.Name,
+                marked = marked is null
+                    ? (object?)null
+                    : new { verdict = marked.Value.Verdict.ToString(), marked.Value.Outcome.Reason },
             });
         });
+
+        // The simplest useful report: what this student is believed to know, and the evidence.
+        app.MapGet("/api/sessions/{sessionId:guid}/progress", (
+            Guid sessionId, ISessionStore sessions, IMasteryStore mastery) =>
+        {
+            var session = sessions.Find(sessionId);
+            if (session is null) return Results.NotFound();
+
+            return Results.Ok(mastery.ForStudent(session.StudentId, session.CourseId).Select(record => new
+            {
+                concept = record.ConceptTitle,
+                belief = Math.Round(record.Belief, 3),
+                mastered = record.IsMastered,
+                reteaches = record.Reteaches,
+                evidence = record.Evidence.Select(item => new
+                {
+                    at = item.At,
+                    verdict = item.Verdict.ToString(),
+                    item.Question,
+                    item.Answer,
+                    item.Misconception,
+                    belief = Math.Round(item.BeliefAfter, 3),
+                }),
+            }));
+        });
     }
+
+    /// <summary>
+    /// Marks a pending check, records the evidence, and applies what it implies. Returns null
+    /// when there was nothing to mark, which is most turns.
+    /// </summary>
+    private static async Task<(Verdict Verdict, AdaptiveOutcome Outcome)?> Mark(
+        TeachingSession session,
+        StoredCourse course,
+        string? said,
+        IMasteryStore mastery,
+        IAnswerJudge judge)
+    {
+        if (said is null || !session.AwaitingCheckAnswer) return null;
+        if (session.PendingQuestion is not { Length: > 0 } question) return null;
+
+        var concept = session.CurrentConcept(course.Plan);
+        if (concept is null) return null;
+
+        var judgement = await judge.JudgeAsync(concept.Title, concept.SourceExcerpt, question, said);
+
+        var record = mastery.For(
+            session.StudentId, course.Id, ConceptKey.From(course.Id, concept.Title), concept.Title);
+
+        record.Record(judgement, question, said);
+        var outcome = AdaptiveDecision.Decide(record, judgement);
+
+        switch (outcome.Adaptation)
+        {
+            case Adaptation.Reteach:
+                record.Reteaches++;
+                session.AwaitingReteach = true;
+                break;
+
+            case Adaptation.Advance:
+            case Adaptation.MoveOnUnmastered:
+                session.Advance(course.Plan);
+                break;
+
+            case Adaptation.Continue:
+                // Teach a little more before asking again, rather than firing a second question
+                // straight into the silence after the first. Being questioned twice in a row
+                // reads as an interrogation, not a lesson.
+                session.TurnsOnConcept = 0;
+                break;
+        }
+
+        mastery.Save(record);
+        session.AwaitingCheckAnswer = false;
+        session.PendingQuestion = null;
+
+        return (judgement.Verdict, outcome);
+    }
+
+    private static object Finished(TeachingSession session) => new
+    {
+        said = string.Empty,
+        drew = Array.Empty<object>(),
+        conceptComplete = true,
+        complete = true,
+        lessonTitle = string.Empty,
+        conceptTitle = string.Empty,
+        sourceRef = string.Empty,
+        tutor = string.Empty,
+        marked = (object?)null,
+    };
 
     private static object Describe(TeachingSession session, StoredCourse course) => new
     {

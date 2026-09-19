@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Lumen.Domain.Assessment;
 using Lumen.Domain.Teaching;
 
 namespace Lumen.Infrastructure.Storage;
@@ -147,4 +148,45 @@ public sealed class InMemorySessionStore : ISessionStore
 
     public TeachingSession? Find(Guid sessionId) =>
         _sessions.TryGetValue(sessionId, out var session) ? session : null;
+}
+
+/// <summary>
+/// What each student is believed to know.
+///
+/// In memory for now, alongside sessions — but unlike a session, this is the part that must
+/// outlive a restart. A mastery estimate is earned over lessons and a student who loses it is
+/// taught everything again. It moves to a database in the same change that persists sessions.
+/// </summary>
+public interface IMasteryStore
+{
+    MasteryRecord For(Guid studentId, Guid courseId, string conceptKey, string conceptTitle);
+    IReadOnlyList<MasteryRecord> ForStudent(Guid studentId, Guid courseId);
+    void Save(MasteryRecord record);
+}
+
+public sealed class InMemoryMasteryStore : IMasteryStore
+{
+    private readonly ConcurrentDictionary<(Guid Student, Guid Course, string Concept), MasteryRecord> _records = new();
+
+    public MasteryRecord For(Guid studentId, Guid courseId, string conceptKey, string conceptTitle) =>
+        _records.GetOrAdd((studentId, courseId, conceptKey), _ => new MasteryRecord
+        {
+            StudentId = studentId,
+            CourseId = courseId,
+            ConceptKey = conceptKey,
+            ConceptTitle = conceptTitle,
+            CreatedAt = DateTimeOffset.UtcNow,
+        });
+
+    public IReadOnlyList<MasteryRecord> ForStudent(Guid studentId, Guid courseId) =>
+        _records.Values
+            .Where(record => record.StudentId == studentId && record.CourseId == courseId)
+            .OrderBy(record => record.ConceptTitle, StringComparer.Ordinal)
+            .ToArray();
+
+    public void Save(MasteryRecord record)
+    {
+        ArgumentNullException.ThrowIfNull(record);
+        _records[(record.StudentId, record.CourseId, record.ConceptKey)] = record;
+    }
 }

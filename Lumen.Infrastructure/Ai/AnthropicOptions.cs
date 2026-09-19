@@ -20,6 +20,15 @@ public sealed class AnthropicOptions
     public int AuthorMaxTokens { get; set; } = 16000;
 
     /// <summary>
+    /// Marking one spoken answer is a small, well-bounded judgement — the cheapest call in the
+    /// system and a reasonable place for a smaller model once there is evidence it agrees with
+    /// the larger one.
+    /// </summary>
+    public string JudgeModel { get; set; } = "claude-opus-5";
+
+    public int JudgeMaxTokens { get; set; } = 500;
+
+    /// <summary>
     /// Inference leaves the country for most deployments, so every document sent is a
     /// cross-border transfer. Readiness refuses to report healthy until this is true.
     /// </summary>

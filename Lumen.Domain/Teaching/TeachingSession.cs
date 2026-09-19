@@ -33,6 +33,13 @@ public sealed class TeachingSession : Entity
     /// <summary>Set once a check has been asked, so the next student utterance is read as an answer.</summary>
     public bool AwaitingCheckAnswer { get; set; }
 
+    /// <summary>
+    /// The question the tutor actually asked, kept so the answer is marked against it rather
+    /// than against the concept in general. "What did you mean by that?" and "how many times
+    /// does the body run?" deserve different marking.
+    /// </summary>
+    public string? PendingQuestion { get; set; }
+
     public bool Complete { get; set; }
 
     public PlannedLesson? CurrentLesson(LessonPlan plan) =>
@@ -59,6 +66,7 @@ public sealed class TeachingSession : Entity
         TurnsOnConcept = 0;
         AwaitingReteach = false;
         AwaitingCheckAnswer = false;
+        PendingQuestion = null;
 
         var lesson = CurrentLesson(plan);
         if (lesson is not null && ConceptIndex + 1 < lesson.Concepts.Count)
