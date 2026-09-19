@@ -126,6 +126,57 @@ public class TutorPromptTests
     }
 
     [Fact]
+    public void The_rules_block_is_identical_whatever_is_being_taught()
+    {
+        // It sits behind the first cache breakpoint, which is only worth having if it is
+        // byte-identical across every student and every course.
+        var somewhereElse = new TutorContext(
+            "A Different Course",
+            new PlannedLesson("Other", "something else", [Concept()]),
+            Concept("a diagram"),
+            CanvasState.Empty.Apply(new ShowStatement("anything")),
+            RegisterLevel.ComfortableCodeSwitch,
+            [TutorTurn.FromStudent("hello")]);
+
+        Assert.Equal(TutorPrompt.Rules, TutorPrompt.System(somewhereElse, TutorIntent.Teach)[..TutorPrompt.Rules.Length]);
+        Assert.StartsWith(TutorPrompt.Rules, TutorPrompt.System(Context(), TutorIntent.Reteach), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void The_material_block_does_not_move_when_the_canvas_does()
+    {
+        // It sits behind the second breakpoint and must hold for the whole concept. A canvas
+        // change mid-concept invalidating it would throw the cache away several times a minute.
+        var before = TutorPrompt.Material(Context());
+        var after = TutorPrompt.Material(Context(CanvasState.Empty.Apply(new ShowCode("py", "a\nb", 2))));
+
+        Assert.Equal(before, after);
+    }
+
+    [Fact]
+    public void Everything_that_changes_per_turn_is_in_the_last_block()
+    {
+        // Anything volatile above a breakpoint silently invalidates everything after it, so the
+        // canvas, the register and the intent all have to live here.
+        var now = TutorPrompt.Now(Context(CanvasState.Empty.Apply(new ShowCode("py", "a\nb\nc", 2))), TutorIntent.Respond);
+
+        Assert.Contains("3 lines", now, StringComparison.Ordinal);
+        Assert.Contains("cut in", now, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(Concept().SourceExcerpt, now, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void The_three_blocks_together_are_the_whole_prompt()
+    {
+        var context = Context();
+
+        var whole = TutorPrompt.System(context, TutorIntent.Teach);
+
+        Assert.Contains(TutorPrompt.Material(context).Trim(), whole, StringComparison.Ordinal);
+        Assert.Contains(TutorPrompt.Now(context, TutorIntent.Teach).Trim(), whole, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void History_is_bounded_so_cost_is_too()
     {
         var turns = Enumerable.Range(1, TutorContext.HistoryWindow * 2)

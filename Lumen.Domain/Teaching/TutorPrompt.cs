@@ -21,10 +21,36 @@ public static class TutorPrompt
     /// </summary>
     public const int MaxSentencesPerTurn = 4;
 
+    /// <summary>
+    /// The three blocks the prompt is built from, split at their stability boundaries rather
+    /// than written as one string.
+    ///
+    /// This is a caching decision with a real cost behind it. Every turn resends the whole
+    /// prompt, so the parts that never change are the parts worth never paying for twice:
+    /// <see cref="Rules"/> is byte-identical for every student in every course,
+    /// <see cref="Material"/> holds for the few turns a concept lasts, and only
+    /// <see cref="Now"/> changes per turn. Tools render before the system prompt, so a cache
+    /// breakpoint on a system block covers the tool definitions too — which are the single
+    /// largest fixed cost in the request.
+    ///
+    /// The ordering constraint is the whole game: anything volatile placed before something
+    /// stable invalidates everything after it. Keep additions in the block they belong to.
+    /// </summary>
     public static string System(TutorContext context, TutorIntent intent)
     {
         ArgumentNullException.ThrowIfNull(context);
 
+        return Rules + "\n" + Material(context) + "\n" + Now(context, intent);
+    }
+
+    /// <summary>
+    /// Never changes — not between turns, students, lessons or courses. First in the prompt so
+    /// it sits behind a breakpoint that every request in the system shares.
+    /// </summary>
+    public static readonly string Rules = BuildRules();
+
+    private static string BuildRules()
+    {
         var prompt = new StringBuilder();
 
         prompt.AppendLine(
@@ -49,6 +75,31 @@ public static class TutorPrompt
             "- When they get something right, say so once and move. Do not congratulate at length.");
         prompt.AppendLine();
 
+        prompt.AppendLine("## The display tools");
+        prompt.AppendLine(
+            "Reach for one when a picture does something words cannot — structure, sequence, code you "
+            + "are walking through, the shape of some numbers. Do not draw to decorate, and do not "
+            + "restate a sentence as bullets. Most turns need nothing.");
+        prompt.AppendLine(
+            "Never refer to something on the canvas that is not on it. You are told, each turn, what "
+            + "the student can actually see.");
+        prompt.AppendLine(
+            "When you walk through code, move the highlight with highlight_code as you reach each "
+            + "line, rather than showing it once and talking over it.");
+
+        return prompt.ToString();
+    }
+
+    /// <summary>
+    /// What is being taught, and the passage it is taught from. Holds for the few turns a
+    /// concept lasts, so it earns its own breakpoint behind the rules.
+    /// </summary>
+    public static string Material(TutorContext context)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+
+        var prompt = new StringBuilder();
+
         prompt.AppendLine("## What you are teaching");
         prompt.AppendLine($"Course: {context.CourseTitle}");
         prompt.AppendLine($"Lesson: {context.Lesson.Title}");
@@ -64,24 +115,27 @@ public static class TutorPrompt
         prompt.AppendLine("```");
         prompt.AppendLine(context.Concept.SourceExcerpt);
         prompt.AppendLine("```");
-        prompt.AppendLine();
 
-        prompt.AppendLine("## The canvas");
-        prompt.AppendLine(context.Canvas.Describe());
-        prompt.AppendLine(
-            "You have display tools. Reach for one when a picture does something words cannot — "
-            + "structure, sequence, code you are walking through, the shape of some numbers. Do not "
-            + "draw to decorate, and do not restate a sentence as bullets. Most turns need nothing.");
-        prompt.AppendLine(
-            "Never refer to something on the canvas that is not on it. The line above says what the "
-            + "student can actually see.");
-        prompt.AppendLine(
-            "When you walk through code, move the highlight with highlight_code as you reach each "
-            + "line, rather than showing it once and talking over it.");
         if (context.Concept.VisualHint is { Length: > 0 } hint)
         {
             prompt.AppendLine($"Worth drawing here, if it fits: {hint}");
         }
+
+        return prompt.ToString();
+    }
+
+    /// <summary>
+    /// Everything that changes turn by turn. Last, and behind no breakpoint — this is the
+    /// varying suffix, and putting any of it earlier would throw away the cache above it.
+    /// </summary>
+    public static string Now(TutorContext context, TutorIntent intent)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+
+        var prompt = new StringBuilder();
+
+        prompt.AppendLine("## On the canvas right now");
+        prompt.AppendLine(context.Canvas.Describe());
         prompt.AppendLine();
 
         prompt.Append(RegisterGuidance(context.Register));

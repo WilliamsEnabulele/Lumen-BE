@@ -70,14 +70,25 @@ public sealed class AnthropicTutorBrain(
 
         for (var hop = 0; hop < MaxToolHops; hop++)
         {
+            // Three system blocks, split at their stability boundaries, with a cache breakpoint
+            // on the first two. Tools render before the system prompt, so the first breakpoint
+            // covers the tool definitions as well — the largest fixed cost in every request.
+            // Only the third block changes per turn, which is why it is last and unmarked.
             var response = await client.Messages.Create(new MessageCreateParams
             {
                 Model = options.TutorModel,
                 MaxTokens = options.TutorMaxTokens,
-                System = TutorPrompt.System(context with { Canvas = canvas }, intent),
+                System = new List<TextBlockParam>
+                {
+                    new() { Text = TutorPrompt.Rules, CacheControl = new CacheControlEphemeral() },
+                    new() { Text = TutorPrompt.Material(context), CacheControl = new CacheControlEphemeral() },
+                    new() { Text = TutorPrompt.Now(context with { Canvas = canvas }, intent) },
+                },
                 Messages = messages,
                 Tools = BuildTools(),
             }, cancellationToken);
+
+            Record(response.Usage);
 
             List<ContentBlockParam> assistantContent = [];
             List<ContentBlockParam> toolResults = [];
@@ -142,6 +153,20 @@ public sealed class AnthropicTutorBrain(
         }
 
         return new TutorResponse(spoken.ToString().Trim(), drew, complete, refusals);
+    }
+
+    /// <summary>
+    /// Logs what the cache actually did.
+    ///
+    /// Caching fails silently: a single changed byte anywhere in the prefix turns every request
+    /// into a full-price write and nothing in the response says so. Reads staying at zero across
+    /// a lesson is the signal that something volatile has crept above a breakpoint.
+    /// </summary>
+    private void Record(Usage usage)
+    {
+        logger.LogDebug(
+            "Turn billed {Fresh} fresh, {Written} written to cache, {Read} read from cache, {Output} out.",
+            usage.InputTokens, usage.CacheCreationInputTokens, usage.CacheReadInputTokens, usage.OutputTokens);
     }
 
     private static List<ToolUnion> BuildTools()
