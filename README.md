@@ -52,6 +52,11 @@ Requires the .NET 10 SDK.
 dotnet run --project Lumen.Api      # http://localhost:5299
 ```
 
+Courses, teaching sessions and mastery records are written to `.local-storage/` as JSON —
+one file each, written aside and moved into place so a crash cannot leave a half-record. Files
+rather than a database because nothing yet asks a question a dictionary cannot answer; when
+something does, the store interfaces are what change and their callers are not.
+
 Without `ANTHROPIC_API_KEY` set, the server swaps the lesson author, the tutor and the answer
 judge for a deterministic trio. That is a degraded mode so the upload path stays runnable
 offline, not a second implementation — it does not teach, it recites.

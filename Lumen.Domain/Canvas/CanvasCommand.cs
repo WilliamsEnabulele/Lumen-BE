@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace Lumen.Domain.Canvas;
 
 /// <summary>
@@ -8,8 +10,29 @@ namespace Lumen.Domain.Canvas;
 /// not precomputed from the document, because what needs illustrating depends on how the
 /// explanation is actually going and on what the student just asked.
 /// </summary>
+/// <remarks>
+/// The polymorphic contract is here rather than in a serializer because the tool name is
+/// already the discriminator everywhere else — it is what the model calls, what the parser
+/// dispatches on, and what the client switches on to decide which shape to draw. Inventing a
+/// second one for storage would mean a canvas that round-trips through disk is not obviously
+/// the same canvas that went in.
+/// </remarks>
+[JsonPolymorphic(TypeDiscriminatorPropertyName = "tool")]
+[JsonDerivedType(typeof(ShowStatement), CanvasTools.ShowStatement)]
+[JsonDerivedType(typeof(ShowSteps), CanvasTools.ShowSteps)]
+[JsonDerivedType(typeof(ShowCode), CanvasTools.ShowCode)]
+[JsonDerivedType(typeof(HighlightCode), CanvasTools.HighlightCode)]
+[JsonDerivedType(typeof(ShowDiagram), CanvasTools.ShowDiagram)]
+[JsonDerivedType(typeof(ShowChart), CanvasTools.ShowChart)]
+[JsonDerivedType(typeof(ShowMath), CanvasTools.ShowMath)]
+[JsonDerivedType(typeof(ClearCanvas), CanvasTools.ClearCanvas)]
 public abstract record CanvasCommand
 {
+    /// <summary>
+    /// Ignored when serialising because the discriminator above already writes it. Two "tool"
+    /// properties on the same object is not a style question — it is an exception at runtime.
+    /// </summary>
+    [JsonIgnore]
     public abstract string Tool { get; }
 }
 

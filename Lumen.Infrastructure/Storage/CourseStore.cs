@@ -1,6 +1,4 @@
 using System.Collections.Concurrent;
-using System.Text.Json;
-using System.Text.Json.Serialization;
 using Lumen.Domain.Assessment;
 using Lumen.Domain.Teaching;
 
@@ -29,12 +27,6 @@ public interface ICourseStore
 /// </summary>
 public sealed class FileCourseStore : ICourseStore
 {
-    private static readonly JsonSerializerOptions Json = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        Converters = { new JsonStringEnumConverter() },
-    };
-
     private readonly ConcurrentDictionary<Guid, StoredCourse> _courses = new();
     private readonly string _root;
 
@@ -42,20 +34,16 @@ public sealed class FileCourseStore : ICourseStore
     {
         _root = Path.Combine(root, "courses");
         Directory.CreateDirectory(_root);
-        Rehydrate();
+
+        foreach (var course in JsonFiles.ReadAll<StoredCourse>(_root)) _courses[course.Id] = course;
     }
 
     public void Save(StoredCourse course)
     {
         ArgumentNullException.ThrowIfNull(course);
-        _courses[course.Id] = course;
 
-        // Written aside and moved into place, so a process that dies mid-write leaves the
-        // previous course intact rather than a half-parsed one.
-        var path = Path.Combine(_root, $"{course.Id}.json");
-        var staging = path + ".tmp";
-        File.WriteAllText(staging, JsonSerializer.Serialize(course, Json));
-        File.Move(staging, path, overwrite: true);
+        _courses[course.Id] = course;
+        JsonFiles.Write(Path.Combine(_root, $"{course.Id}.json"), course);
     }
 
     public StoredCourse? Find(Guid courseId) =>
@@ -63,23 +51,6 @@ public sealed class FileCourseStore : ICourseStore
 
     public IReadOnlyList<StoredCourse> List() =>
         _courses.Values.OrderByDescending(course => course.CreatedAt).ToArray();
-
-    private void Rehydrate()
-    {
-        foreach (var path in Directory.EnumerateFiles(_root, "*.json"))
-        {
-            try
-            {
-                var course = JsonSerializer.Deserialize<StoredCourse>(File.ReadAllText(path), Json);
-                if (course is not null) _courses[course.Id] = course;
-            }
-            catch (JsonException)
-            {
-                // A course we cannot read is not a reason to refuse to start. It reports as
-                // missing, which is the truth, and can be re-ingested.
-            }
-        }
-    }
 }
 
 public interface IUploadStorage
@@ -126,9 +97,11 @@ public sealed class LocalDiskUploadStorage : IUploadStorage
 /// <summary>
 /// Live teaching sessions.
 ///
-/// In memory, deliberately, for now: a session is a conversation in progress, and the thing
-/// that must survive a restart is the position in the plan, not the transcript. Persisting it
-/// is the same work as persisting mastery, and belongs in the same change.
+/// A session is a conversation in progress, and the thing that must survive a restart is the
+/// position in the plan — which is why it is a stored object and not something inferred from
+/// the transcript afterwards. <see cref="FileSessionStore"/> is what actually stores it;
+/// <see cref="InMemorySessionStore"/> is for tests, where a lesson that outlives the test is
+/// a leak rather than a feature.
 /// </summary>
 public interface ISessionStore
 {
@@ -153,9 +126,9 @@ public sealed class InMemorySessionStore : ISessionStore
 /// <summary>
 /// What each student is believed to know.
 ///
-/// In memory for now, alongside sessions — but unlike a session, this is the part that must
-/// outlive a restart. A mastery estimate is earned over lessons and a student who loses it is
-/// taught everything again. It moves to a database in the same change that persists sessions.
+/// The part that most has to outlive a restart. A belief is earned over a whole lesson of
+/// answered questions, and losing it does not merely reset a number — it undoes the adaptation
+/// the number exists for, and the student is taught everything they already demonstrated.
 /// </summary>
 public interface IMasteryStore
 {
