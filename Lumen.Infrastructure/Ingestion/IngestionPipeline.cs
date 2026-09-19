@@ -1,5 +1,4 @@
 using System.Collections.Concurrent;
-using Lumen.Domain.Courses;
 using Lumen.Domain.Ingestion;
 using Lumen.Domain.Teaching;
 using Lumen.Infrastructure.Extraction;
@@ -90,7 +89,7 @@ public sealed class IngestionPipeline(
 
             // A plan whose prerequisites form a cycle cannot be taught in any order, and would
             // mis-teach everyone who took it. Better to refuse the upload than to publish one.
-            if (CycleIn(plan) is { } cycle)
+            if (LessonPlanValidator.CycleIn(plan) is { } cycle)
             {
                 Fail(document, $"The lesson plan doubles back on itself around “{cycle}”. Try uploading again.");
                 logger.LogWarning("Authored plan for {CourseId} contained a prerequisite cycle.", document.CourseId);
@@ -114,24 +113,6 @@ public sealed class IngestionPipeline(
             Fail(document, "Something went wrong turning that document into a lesson.");
             logger.LogError(exception, "Ingestion failed for document {DocumentId}.", document.Id);
         }
-    }
-
-    /// <summary>Returns the title of a concept caught in a cycle, or null when the plan is sound.</summary>
-    internal static string? CycleIn(LessonPlan plan)
-    {
-        foreach (var lesson in plan.Lessons)
-        {
-            var titles = lesson.Concepts.Select(concept => concept.Title).ToArray();
-            var prerequisites = lesson.Concepts.ToDictionary(
-                concept => concept.Title,
-                concept => (IReadOnlyList<string>)concept.Prerequisites.ToArray(),
-                StringComparer.Ordinal);
-
-            var ordering = PrerequisiteGraph.Order(titles, prerequisites);
-            if (ordering.HasCycle) return ordering.CyclicConceptKeys[0];
-        }
-
-        return null;
     }
 
     private static void Fail(SourceDocument document, string reason)

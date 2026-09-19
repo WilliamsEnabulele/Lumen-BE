@@ -1,5 +1,4 @@
 using Lumen.Domain.Teaching;
-using Lumen.Infrastructure.Ingestion;
 
 namespace Lumen.Tests;
 
@@ -23,7 +22,7 @@ public class IngestionPlanValidationTests
             ]),
         ]);
 
-        Assert.Null(IngestionPipeline.CycleIn(plan));
+        Assert.Null(LessonPlanValidator.CycleIn(plan));
     }
 
     [Fact]
@@ -36,7 +35,7 @@ public class IngestionPlanValidationTests
             ]),
         ]);
 
-        var cycle = IngestionPipeline.CycleIn(plan);
+        var cycle = LessonPlanValidator.CycleIn(plan);
 
         Assert.NotNull(cycle);
         Assert.Contains(cycle, new[] { "Chicken", "Egg" });
@@ -52,6 +51,6 @@ public class IngestionPlanValidationTests
             new PlannedLesson("Two", "objective", [Concept("Nesting", "Loops")]),
         ]);
 
-        Assert.Null(IngestionPipeline.CycleIn(plan));
+        Assert.Null(LessonPlanValidator.CycleIn(plan));
     }
 }
