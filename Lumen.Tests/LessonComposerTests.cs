@@ -71,7 +71,7 @@ public class LessonComposerTests
                 new ExtractedBlock(BlockKind.Code, "for i in range(5):\n    print(i)", "ch4:p61")
             ])));
 
-        var code = Assert.Single(composed.ScriptNodes.Where(node => node.VisualKind == VisualKind.Code));
+        var code = Assert.Single(composed.ScriptNodes, node => node.VisualKind == VisualKind.Code);
         Assert.Equal("for i in range(5):\n    print(i)", code.VisualPayload);
         Assert.DoesNotContain("range(5)", code.Text, StringComparison.Ordinal);
     }
