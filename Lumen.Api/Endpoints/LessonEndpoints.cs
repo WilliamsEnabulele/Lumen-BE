@@ -92,6 +92,11 @@ public static class LessonEndpoints
 
             if (said is not null) session.Record(TutorTurn.FromStudent(said));
 
+            // How the student speaks moves how the tutor speaks — one direction only, and only
+            // on what they actually said. This has to run before the context is built or the
+            // register reaching the model is always one turn behind the student.
+            RegisterTracking.Hear(session, said);
+
             // An utterance already consumed as a check answer is not also an interruption.
             // Passing it on would have the tutor respond to it conversationally instead of
             // reteaching — which is how the reteach path became unreachable in the first place.
@@ -136,6 +141,7 @@ public static class LessonEndpoints
                 conceptTitle = session.CurrentConcept(course.Plan)?.Title ?? concept.Title,
                 sourceRef = concept.SourceRef,
                 tutor = brain.Name,
+                register = session.Register.ToString(),
                 marked = marked is null
                     ? (object?)null
                     : new { verdict = marked.Value.Verdict.ToString(), marked.Value.Outcome.Reason },
@@ -258,6 +264,7 @@ public static class LessonEndpoints
         conceptTitle = string.Empty,
         sourceRef = string.Empty,
         tutor = string.Empty,
+        register = RegisterLevel.StandardEnglish.ToString(),
         marked = (object?)null,
     };
 

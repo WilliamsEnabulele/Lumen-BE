@@ -24,6 +24,19 @@ public sealed class TeachingSession : Entity
 
     public List<TutorTurn> History { get; set; } = [];
 
+    /// <summary>
+    /// Student utterances in a row carrying Pidgin. The evidence the register ladder climbs on,
+    /// and the reason it climbs slowly — one stray word is not an invitation.
+    /// </summary>
+    public int ConsecutiveCodeSwitches { get; set; }
+
+    /// <summary>
+    /// They asked to be spoken to plainly. Permanent for the session, and never re-opened by
+    /// anything they say afterwards: a machine that treats a later slip as permission is a
+    /// machine that was waiting for an excuse.
+    /// </summary>
+    public bool PlainEnglishRequested { get; set; }
+
     /// <summary>Turns spent on the current concept, which is how a check is timed.</summary>
     public int TurnsOnConcept { get; set; }
 
