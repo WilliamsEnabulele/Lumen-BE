@@ -27,6 +27,10 @@ public sealed class WordExtractor : IDocumentExtractor
         var document = XDocument.Load(stream);
 
         var sections = new List<ExtractedSection>();
+
+        // Held separately for the same reason as in PlainTextExtractor: a Title or Heading 1
+        // followed straight by Heading 2 emits no section of its own.
+        var documentTitle = string.Empty;
         var heading = string.Empty;
         var level = 0;
         var blocks = new List<ExtractedBlock>();
@@ -52,6 +56,7 @@ public sealed class WordExtractor : IDocumentExtractor
                 Flush();
                 heading = text;
                 level = int.TryParse(style[7..], out var parsed) ? parsed : 1;
+                if (level == 1 && documentTitle.Length == 0) documentTitle = heading;
                 continue;
             }
 
@@ -60,6 +65,7 @@ public sealed class WordExtractor : IDocumentExtractor
                 Flush();
                 heading = text;
                 level = 1;
+                if (documentTitle.Length == 0) documentTitle = heading;
                 continue;
             }
 
@@ -72,8 +78,7 @@ public sealed class WordExtractor : IDocumentExtractor
 
         Flush();
 
-        var title = sections.FirstOrDefault(section => section.Level == 1)?.Heading
-                    ?? Path.GetFileNameWithoutExtension(fileName);
+        var title = documentTitle.Length > 0 ? documentTitle : Path.GetFileNameWithoutExtension(fileName);
 
         return new ExtractedDocument(title, sections);
     }

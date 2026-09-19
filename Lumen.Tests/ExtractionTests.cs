@@ -97,6 +97,24 @@ multiply, and multiplication gets away from you faster than people expect it to.
     }
 
     [Fact]
+    public void The_title_survives_a_heading_with_nothing_directly_under_it()
+    {
+        // Almost every document is shaped this way: a title, then straight into the first
+        // subheading. The title section is never emitted, so it has to be held separately.
+        var extracted = new PlainTextExtractor().Extract(Bytes("# Real Title\n\n## First\n\nSome prose here."), "whatever.md");
+
+        Assert.Equal("Real Title", extracted.Title);
+    }
+
+    [Fact]
+    public void A_document_with_no_title_falls_back_to_its_file_name()
+    {
+        var extracted = new PlainTextExtractor().Extract(Bytes("Just some prose, no headings at all."), "pasted-notes.md");
+
+        Assert.Equal("pasted-notes", extracted.Title);
+    }
+
+    [Fact]
     public void A_file_that_is_not_the_format_its_name_claims_fails_loudly()
     {
         Assert.ThrowsAny<Exception>(() => new WordExtractor().Extract(Bytes("not a zip"), "pretend.docx"));
