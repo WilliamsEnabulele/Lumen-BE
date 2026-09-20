@@ -5,12 +5,16 @@ using Lumen.Domain.Common;
 namespace Lumen.Domain.Accounts;
 
 /// <summary>
-/// A signed-in session.
+/// A signed-in session, and the refresh token that keeps it alive.
 ///
-/// An opaque token kept server-side rather than a signed one the client carries, because the
-/// question this has to answer well is "has this been revoked" — and a self-contained token
-/// answers it with "not until it expires". Signing out, a stolen laptop and a compromised
-/// account all need a session to stop working now.
+/// Opaque and kept server-side, which is precisely what the access token beside it is not. The
+/// division of labour is the point: a short-lived JWT answers "who is this" without a database
+/// at all, and this answers "is this person still allowed in", which a signed token cannot —
+/// it would say "not until it expires", and signing out, a stolen laptop and a compromised
+/// account all need an answer of "no, now".
+///
+/// So this is the half that is checked against the store, once every fifteen minutes when a
+/// new access token is asked for, rather than on every request.
 /// </summary>
 public sealed class AuthSession : Entity
 {
@@ -32,8 +36,9 @@ public sealed class AuthSession : Entity
     public bool IsUsableAt(DateTimeOffset now) => RevokedAt is null && now < ExpiresAt;
 
     /// <summary>
-    /// How long a sign-in lasts. Long enough that a student is not asked again mid-lesson,
-    /// short enough that a session left open on a shared machine does not last a term.
+    /// How long a sign-in lasts before the password is wanted again. Long enough that a student
+    /// is not asked mid-lesson, short enough that a session left open on a shared machine does
+    /// not last a term.
     /// </summary>
     public static readonly TimeSpan Lifetime = TimeSpan.FromDays(30);
 

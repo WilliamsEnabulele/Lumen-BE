@@ -11,11 +11,18 @@ public sealed record SignInRequest(string? Email, string? Password);
 /// <summary>
 /// Accounts.
 ///
-/// Two rules shape everything here. A sign-in failure says the same thing whichever half was
-/// wrong, because distinguishing them hands an attacker a list of real accounts and hands
-/// anybody else a way to find out where a person has signed up. And the session travels in an
-/// HttpOnly cookie rather than a token the page can read, so a script that gets onto the page
-/// cannot walk off with somebody's account.
+/// Two tokens, doing different jobs. The <b>access token</b> is a short-lived JWT the client
+/// sends on every request; it is verified by signature alone, so reading the API costs no
+/// database lookup. The <b>refresh token</b> is opaque, server-side and revocable, lives in an
+/// HttpOnly cookie, and is the only thing that can mint a new access token.
+///
+/// That split is what makes signing out mean something. A signed token cannot be withdrawn, so
+/// if it were the only token, "sign out" would mean "stop working in thirty days". Here it
+/// means the next refresh fails, and the access token in flight expires within fifteen minutes.
+///
+/// A sign-in failure says the same thing whichever half was wrong, because distinguishing them
+/// hands an attacker a list of real accounts, and hands anybody else a way to find out where a
+/// person has signed up.
 /// </summary>
 public static class AuthEndpoints
 {
@@ -27,6 +34,7 @@ public static class AuthEndpoints
             SignUpRequest request,
             IStudentStore students,
             IAuthSessionStore sessions,
+            AccessTokens access,
             HttpResponse response) =>
         {
             var email = request.Email?.Trim() ?? string.Empty;
@@ -50,7 +58,7 @@ public static class AuthEndpoints
             };
             students.Save(student);
 
-            return SignIn(student, sessions, response, cookies, now);
+            return SignIn(student, sessions, access, response, cookies, now);
         })
         .RequireRateLimiting(RateLimits.Auth);
 
@@ -58,6 +66,7 @@ public static class AuthEndpoints
             SignInRequest request,
             IStudentStore students,
             IAuthSessionStore sessions,
+            AccessTokens access,
             HttpResponse response) =>
         {
             var student = students.FindByEmail(request.Email ?? string.Empty);
@@ -85,21 +94,68 @@ public static class AuthEndpoints
             student.UpdatedAt = now;
             students.Save(student);
 
-            return SignIn(student, sessions, response, cookies, now);
+            return SignIn(student, sessions, access, response, cookies, now);
         })
         .RequireRateLimiting(RateLimits.Auth);
 
+        // Trading the refresh cookie for a new access token. The one place a session is checked
+        // against the store, which is what makes revoking it mean anything.
+        app.MapPost("/api/auth/refresh", (
+            HttpRequest httpRequest,
+            IStudentStore students,
+            IAuthSessionStore sessions,
+            AccessTokens access,
+            HttpResponse response) =>
+        {
+            var presented = httpRequest.Cookies[SignedIn.RefreshCookie];
+            if (string.IsNullOrWhiteSpace(presented))
+                return Results.Json(new { error = "Nobody is signed in." }, statusCode: 401);
+
+            var now = DateTimeOffset.UtcNow;
+            var session = sessions.FindByTokenHash(AuthSession.HashOf(presented));
+
+            if (session is null || !session.IsUsableAt(now) || students.Find(session.StudentId) is not { } student)
+            {
+                // A cookie that no longer opens anything is cleared rather than left to fail
+                // again on every load.
+                response.Cookies.Delete(SignedIn.RefreshCookie, cookies.Deletion());
+                return Results.Json(new { error = "That session has ended. Sign in again." }, statusCode: 401);
+            }
+
+            var (token, expires) = access.Issue(student.Id, session.Id, now);
+
+            return Results.Ok(new
+            {
+                accessToken = token,
+                expiresAt = expires,
+                id = student.Id,
+                email = student.Email,
+                name = student.Name,
+            });
+        });
+
         app.MapPost("/api/auth/logout", (
-            ISignedIn signedIn, IAuthSessionStore sessions, HttpResponse response) =>
+            HttpRequest httpRequest, IAuthSessionStore sessions, HttpResponse response) =>
         {
             // Revoked server-side as well as cleared client-side. Deleting the cookie alone
-            // leaves a token that still works to anybody who copied it.
-            if (signedIn.Student is { } student)
-                sessions.RevokeAllFor(student.Id, DateTimeOffset.UtcNow);
+            // leaves a working refresh token with anybody who copied it.
+            //
+            // This session only, not every session the student has: signing out on a laptop
+            // should not sign somebody out of their phone, and "everywhere" is a different
+            // thing somebody asks for deliberately.
+            if (httpRequest.Cookies[SignedIn.RefreshCookie] is { Length: > 0 } presented
+                && sessions.FindByTokenHash(AuthSession.HashOf(presented)) is { } session)
+            {
+                session.RevokedAt = DateTimeOffset.UtcNow;
+                session.UpdatedAt = session.RevokedAt.Value;
+                sessions.Save(session);
+            }
 
-            response.Cookies.Delete(SignedIn.Cookie, cookies.Deletion());
+            response.Cookies.Delete(SignedIn.RefreshCookie, cookies.Deletion());
 
-            return Results.Ok(new { signedOut = true });
+            // The access token already issued keeps working until it expires. Nothing can call
+            // it back, which is the cost of it being verifiable without a database.
+            return Results.Ok(new { signedOut = true, accessTokenValidFor = "up to 15 minutes" });
         });
 
         app.MapGet("/api/auth/me", (ISignedIn signedIn) =>
@@ -111,18 +167,30 @@ public static class AuthEndpoints
     private static IResult SignIn(
         Student student,
         IAuthSessionStore sessions,
+        AccessTokens access,
         HttpResponse response,
         CookiePolicy cookies,
         DateTimeOffset now)
     {
-        var (session, token) = AuthSession.Issue(student.Id, now);
+        var (session, refresh) = AuthSession.Issue(student.Id, now);
         sessions.Save(session);
 
-        response.Cookies.Append(SignedIn.Cookie, token, cookies.For(session.ExpiresAt));
+        // The refresh token goes in the cookie and nowhere else — returning it in the body too
+        // would put the long-lived half somewhere a script can read, which is the whole point
+        // of HttpOnly. The access token does go in the body, because the client has to be able
+        // to put it in a header, and it is the half designed to be cheap to lose.
+        response.Cookies.Append(SignedIn.RefreshCookie, refresh, cookies.For(session.ExpiresAt));
 
-        // The token is in the cookie and nowhere else. Returning it in the body too would put
-        // it somewhere a script can read, which is the whole thing HttpOnly is for.
-        return Results.Ok(new { id = student.Id, email = student.Email, name = student.Name });
+        var (token, expires) = access.Issue(student.Id, session.Id, now);
+
+        return Results.Ok(new
+        {
+            accessToken = token,
+            expiresAt = expires,
+            id = student.Id,
+            email = student.Email,
+            name = student.Name,
+        });
     }
 }
 
@@ -147,6 +215,13 @@ public static class RateLimits
 /// </summary>
 public sealed class CookiePolicy(bool crossSite)
 {
+    /// <summary>
+    /// Only the auth endpoints ever need the refresh token, so it is scoped to them. A cookie
+    /// sent on every request to every path is one with far more chances to be logged, proxied
+    /// or leaked than it has reasons to exist.
+    /// </summary>
+    private const string RefreshPath = "/api/auth";
+
     public CookieOptions For(DateTimeOffset expires) => new()
     {
         HttpOnly = true,
@@ -156,7 +231,7 @@ public sealed class CookiePolicy(bool crossSite)
         // it, so that is an explicit switch rather than something guessed from a hostname.
         SameSite = crossSite ? SameSiteMode.None : SameSiteMode.Lax,
         Expires = expires,
-        Path = "/",
+        Path = RefreshPath,
         IsEssential = true,
     };
 
@@ -169,7 +244,7 @@ public sealed class CookiePolicy(bool crossSite)
         HttpOnly = true,
         Secure = true,
         SameSite = crossSite ? SameSiteMode.None : SameSiteMode.Lax,
-        Path = "/",
+        Path = RefreshPath,
         IsEssential = true,
     };
 }

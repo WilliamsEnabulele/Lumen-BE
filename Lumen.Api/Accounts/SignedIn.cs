@@ -1,16 +1,11 @@
+using System.Security.Claims;
 using Lumen.Domain.Accounts;
 using Lumen.Infrastructure.Storage;
+using Microsoft.IdentityModel.JsonWebTokens;
 
 namespace Lumen.Api.Accounts;
 
-/// <summary>
-/// Who is making this request, resolved once per request from the session cookie.
-///
-/// Lives here rather than in Lumen.Infrastructure because it is the one piece of identity that
-/// knows what a cookie is. Infrastructure stores things; the web layer is what turns an HTTP
-/// request into a person, and pulling ASP.NET into a class library to avoid that split would
-/// have been the wrong trade.
-/// </summary>
+/// <summary>Who is making this request, resolved from the access token it carried.</summary>
 public interface ISignedIn
 {
     /// <summary>The student, or null when nobody is signed in.</summary>
@@ -28,16 +23,29 @@ public interface ISignedIn
     Guid Id { get; }
 }
 
-/// <inheritdoc />
-public sealed class SignedIn(IHttpContextAccessor accessor, IStudentStore students, IAuthSessionStore sessions)
-    : ISignedIn
+/// <summary>
+/// Reads the signed-in student out of the validated access token.
+///
+/// The token has already been checked by the JWT middleware — signature, issuer, audience and
+/// expiry — before this runs, so this is a claim lookup rather than a second verification.
+/// Deliberately no trip to the session store: a token is trusted for the fifteen minutes it
+/// lives, and checking every request against a database would be paying a stateless design's
+/// price while keeping a stateful one's cost.
+///
+/// The consequence is the one worth knowing: signing out stops the next refresh, not the
+/// current token. That window is the access lifetime, and it is why the access lifetime is
+/// short.
+/// </summary>
+public sealed class SignedIn(IHttpContextAccessor accessor, IStudentStore students) : ISignedIn
 {
     /// <summary>
-    /// The cookie the session travels in. HttpOnly, so a script that gets onto the page cannot
-    /// read it — which is the single largest difference between this and keeping a token in
-    /// local storage.
+    /// The cookie the refresh token travels in.
+    ///
+    /// HttpOnly, so a script on the page cannot read it — which matters more here than it did
+    /// when this cookie held everything: the refresh token is now the long-lived half, and the
+    /// access token beside it is deliberately cheap to lose.
     /// </summary>
-    public const string Cookie = "lumen_session";
+    public const string RefreshCookie = "lumen_refresh";
 
     private Student? _student;
     private bool _resolved;
@@ -49,13 +57,17 @@ public sealed class SignedIn(IHttpContextAccessor accessor, IStudentStore studen
             if (_resolved) return _student;
             _resolved = true;
 
-            var token = accessor.HttpContext?.Request.Cookies[Cookie];
-            if (string.IsNullOrWhiteSpace(token)) return null;
+            var principal = accessor.HttpContext?.User;
+            if (principal?.Identity?.IsAuthenticated != true) return null;
 
-            var session = sessions.FindByTokenHash(AuthSession.HashOf(token));
-            if (session is null || !session.IsUsableAt(DateTimeOffset.UtcNow)) return null;
+            // ClaimTypes.NameIdentifier is where the handler maps "sub" to by default; the raw
+            // name is read too, because that mapping is a setting somebody can turn off.
+            var subject = principal.FindFirstValue(ClaimTypes.NameIdentifier)
+                          ?? principal.FindFirstValue(JwtRegisteredClaimNames.Sub);
 
-            _student = students.Find(session.StudentId);
+            if (!Guid.TryParse(subject, out var studentId)) return null;
+
+            _student = students.Find(studentId);
             return _student;
         }
     }

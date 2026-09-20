@@ -166,11 +166,23 @@ public class AuthSessionTests
     [Fact]
     public void A_revoked_session_stops_working_at_once_rather_than_at_expiry()
     {
-        // The whole reason the token is held server-side. Signing out has to mean now.
+        // The whole reason the refresh half is held server-side. The access token cannot be
+        // withdrawn, so this is the only place "signed out" can be made true.
         var (session, _) = AuthSession.Issue(Guid.CreateVersion7(), Now);
         session.RevokedAt = Now;
 
         Assert.False(session.IsUsableAt(Now));
+    }
+
+    [Fact]
+    public void A_refresh_token_outlives_many_access_tokens()
+    {
+        // The two lifetimes are a pair: the refresh token is what a student keeps, and the
+        // access token is what they lose cheaply. If these ever converged, one of the two
+        // would have stopped doing its job.
+        Assert.True(
+            AuthSession.Lifetime > TimeSpan.FromHours(1),
+            "a refresh token this short asks for the password mid-lesson");
     }
 }
 

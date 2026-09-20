@@ -3,6 +3,7 @@ using Anthropic;
 using Lumen.Api.Endpoints;
 using Lumen.Domain.Assessment;
 using Lumen.Domain.Teaching;
+using System.Security.Cryptography;
 using System.Threading.RateLimiting;
 using Lumen.Api.Accounts;
 using Lumen.Infrastructure.Ai;
@@ -10,6 +11,8 @@ using Lumen.Infrastructure.Billing;
 using Lumen.Infrastructure.Extraction;
 using Lumen.Infrastructure.Ingestion;
 using Lumen.Infrastructure.Storage;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.IdentityModel.Tokens;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -99,10 +102,55 @@ else
     builder.Services.AddSingleton<IPaymentProvider, PaymentsUnavailable>();
 }
 
-// Who is asking. Scoped, so the cookie is resolved once per request rather than once per
-// handler that wants to know.
+// Who is asking. Scoped, so the token is read once per request rather than once per handler
+// that wants to know.
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<ISignedIn, SignedIn>();
+
+var jwt = builder.Configuration.GetSection(JwtOptions.Section).Get<JwtOptions>() ?? new JwtOptions();
+jwt.SigningKey ??= Environment.GetEnvironmentVariable("LUMEN_JWT_KEY");
+
+if (!jwt.IsConfigured)
+{
+    // Anybody holding this key can mint a token for any student, so there is no default. A
+    // fallback would be identical on every deployment and published in this repository.
+    if (!builder.Environment.IsDevelopment())
+    {
+        throw new InvalidOperationException(
+            "Auth:Jwt:SigningKey (or LUMEN_JWT_KEY) must be set, and at least 32 characters. "
+            + "There is deliberately no default: a shared signing key is every account on every "
+            + "deployment.");
+    }
+
+    // Development gets a key that lasts as long as the process. Restarting signs everybody out,
+    // which is mildly annoying and considerably better than a key in source control.
+    jwt.SigningKey = Convert.ToBase64String(RandomNumberGenerator.GetBytes(48));
+}
+
+builder.Services.AddSingleton(jwt);
+builder.Services.AddSingleton<AccessTokens>();
+
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
+    {
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuer = true,
+            ValidIssuer = jwt.Issuer,
+            ValidateAudience = true,
+            ValidAudience = jwt.Audience,
+            ValidateIssuerSigningKey = true,
+            IssuerSigningKey = jwt.Key(),
+            ValidateLifetime = true,
+            // Named explicitly rather than left to the defaults, because "which algorithms do
+            // we accept" is the question behind every algorithm-confusion attack.
+            ValidAlgorithms = [SecurityAlgorithms.HmacSha256],
+            // The default five minutes of grace undoes a good part of a fifteen-minute token.
+            ClockSkew = TimeSpan.FromSeconds(30),
+        };
+    });
+
+builder.Services.AddAuthorization();
 
 // Cross-site cookies are for a split-origin development setup only. Never inferred from a
 // hostname: guessing it wrong in production silently drops the CSRF protection SameSite=Lax
@@ -140,8 +188,9 @@ builder.Services.AddCors(options => options.AddPolicy(DevelopmentCors, policy =>
     .WithOrigins("http://localhost:4200", "http://127.0.0.1:4200")
     .AllowAnyHeader()
     .AllowAnyMethod()
-    // The session is a cookie, so the browser has to be told it may send it. Origins stay an
-    // explicit list for exactly this reason — credentials and a wildcard origin cannot mix.
+    // The refresh token is a cookie, so the browser has to be told it may send it. Origins
+    // stay an explicit list for exactly this reason — credentials and a wildcard origin
+    // cannot mix. The access token needs none of this: it travels in a header the client sets.
     .AllowCredentials()));
 
 var app = builder.Build();
@@ -149,6 +198,8 @@ var app = builder.Build();
 if (app.Environment.IsDevelopment()) app.UseCors(DevelopmentCors);
 
 app.UseRateLimiter();
+app.UseAuthentication();
+app.UseAuthorization();
 
 app.MapGet("/health", () => Results.Ok(new
 {
@@ -156,6 +207,12 @@ app.MapGet("/health", () => Results.Ok(new
     // Said out loud, because "is this server charging people" is the first question anybody
     // debugging a deployment asks and the most expensive one to get wrong.
     payments = monnify.IsConfigured ? "monnify" : "none",
+    // Said out loud because a development key means every token dies on the next restart, and
+    // that is confusing to debug and trivial to explain.
+    signingKey = builder.Configuration["Auth:Jwt:SigningKey"] is not null
+                 || Environment.GetEnvironmentVariable("LUMEN_JWT_KEY") is not null
+        ? "configured"
+        : "ephemeral",
     billing = enforceBilling ? "enforced" : "open",
 }));
 app.MapAuthEndpoints(cookiePolicy);
