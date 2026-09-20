@@ -1,3 +1,4 @@
+using Lumen.Domain.Billing;
 using Lumen.Infrastructure.Billing;
 
 namespace Lumen.Tests;
@@ -79,6 +80,84 @@ public class MonnifySignatureTests
         var upper = MonnifySignature.Compute(Body, Secret).ToUpperInvariant();
 
         Assert.True(MonnifySignature.IsValid(Body, upper, Secret));
+    }
+}
+
+/// <summary>
+/// Reading a webhook body. This is now the whole business decision — there is no second
+/// opinion to fall back on — so the tests are about what it refuses as much as what it reads.
+/// </summary>
+public class WebhookReadingTests
+{
+    [Fact]
+    public void A_flat_body_is_read()
+    {
+        var confirmed = MonnifyWebhook.Read(
+            """{"paymentReference":"lmn_1","transactionReference":"MNFY|9","paymentStatus":"PAID","amountPaid":"2500.00","currencyCode":"NGN"}""");
+
+        Assert.NotNull(confirmed);
+        Assert.Equal("lmn_1", confirmed.OurReference);
+        Assert.Equal("MNFY|9", confirmed.ProviderReference);
+        Assert.Equal(Money.FromNaira(2500), confirmed.Paid);
+        Assert.True(confirmed.SaysPaid);
+    }
+
+    [Fact]
+    public void A_body_nested_under_event_data_is_read_the_same_way()
+    {
+        // Monnify has moved these between shapes across versions. Binding to one means a
+        // version bump silently stops granting anybody anything, while the money still leaves.
+        var confirmed = MonnifyWebhook.Read(
+            """{"eventType":"SUCCESSFUL_TRANSACTION","eventData":{"paymentReference":"lmn_1","paymentStatus":"PAID","amountPaid":2500,"currencyCode":"NGN"}}""");
+
+        Assert.NotNull(confirmed);
+        Assert.Equal("lmn_1", confirmed.OurReference);
+        Assert.Equal(Money.FromNaira(2500), confirmed.Paid);
+        Assert.True(confirmed.SaysPaid);
+    }
+
+    [Fact]
+    public void An_amount_as_a_json_number_keeps_its_kobo()
+    {
+        var confirmed = MonnifyWebhook.Read("""{"paymentReference":"lmn_1","amountPaid":2500.10,"paymentStatus":"PAID"}""");
+
+        Assert.Equal(250_010, confirmed!.Paid!.Value.Kobo);
+    }
+
+    [Fact]
+    public void A_message_with_no_amount_says_nothing_was_paid()
+    {
+        var confirmed = MonnifyWebhook.Read("""{"paymentReference":"lmn_1","paymentStatus":"PAID"}""");
+
+        Assert.NotNull(confirmed);
+        Assert.Null(confirmed.Paid);
+        Assert.False(confirmed.SaysPaid);
+    }
+
+    [Fact]
+    public void A_status_that_is_not_success_does_not_say_paid()
+    {
+        var confirmed = MonnifyWebhook.Read(
+            """{"eventType":"FAILED_TRANSACTION","eventData":{"paymentReference":"lmn_1","paymentStatus":"FAILED","amountPaid":2500}}""");
+
+        Assert.False(confirmed!.SaysPaid);
+    }
+
+    [Fact]
+    public void A_negative_amount_is_not_an_amount()
+    {
+        var confirmed = MonnifyWebhook.Read("""{"paymentReference":"lmn_1","paymentStatus":"PAID","amountPaid":-2500}""");
+
+        Assert.Null(confirmed!.Paid);
+        Assert.False(confirmed.SaysPaid);
+    }
+
+    [Theory]
+    [InlineData("not json at all")]
+    [InlineData("[]")]
+    public void A_body_that_cannot_be_read_confirms_nothing(string body)
+    {
+        Assert.True(MonnifyWebhook.Read(body) is null or { OurReference: null, ProviderReference: null });
     }
 }
 

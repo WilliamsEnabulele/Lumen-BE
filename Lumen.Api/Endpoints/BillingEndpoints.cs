@@ -52,8 +52,8 @@ public static class BillingEndpoints
                 CreatedAt = DateTimeOffset.UtcNow,
             };
 
-            // Saved before the provider is called, so a timeout leaves a record we can verify
-            // against rather than a payment nobody here has ever heard of.
+            // Saved before the provider is called, so a webhook that arrives before this
+            // returns still finds a payment to attach itself to.
             payments.Save(intent);
 
             try
@@ -85,20 +85,16 @@ public static class BillingEndpoints
         // Where the student lands after paying. Verifies rather than believing the redirect,
         // and means the flow completes even when the webhook never arrives — which it will not,
         // eventually, for somebody.
-        app.MapGet("/api/payments/{reference}", async (
-            string reference,
-            IPaymentProvider provider,
-            IPaymentStore payments,
-            IEntitlementStore entitlements) =>
+        app.MapGet("/api/payments/{reference}", (string reference, IPaymentStore payments) =>
         {
             if (!PaymentReference.IsWellFormed(reference)) return Results.NotFound();
 
             var intent = payments.Find(reference);
             if (intent is null) return Results.NotFound();
 
-            if (!intent.IsSettled && intent.ProviderReference is { Length: > 0 })
-                await Settle(intent, provider, payments, entitlements);
-
+            // Reports what the webhook has already confirmed. It does not go and ask, because
+            // confirmation arrives one way only — so a student who lands here before Monnify's
+            // message does sees "pending", which is the truth, rather than a second opinion.
             return Results.Ok(new
             {
                 reference = intent.Reference,
@@ -110,23 +106,27 @@ public static class BillingEndpoints
             });
         });
 
-        app.MapGet("/api/entitlement", (IEntitlementStore entitlements) =>
+        app.MapGet("/api/entitlement", (
+            IEntitlementStore entitlements, IUploadLedger uploads, BillingEnforcement billing) =>
         {
-            var granted = entitlements.For(DefaultStudent);
             var now = DateTimeOffset.UtcNow;
+            var granted = entitlements.For(DefaultStudent);
+            var used = uploads.CountInMonth(DefaultStudent, now);
 
             return Results.Ok(new
             {
                 active = granted?.IsActiveAt(now) ?? false,
                 plan = granted?.PlanCode,
                 expiresAt = granted?.ExpiresAt,
+                enforced = billing.Enforced,
+                freeUploadsLeft = Access.FreeUploadsLeft(used),
+                freeAllowanceResetsAt = Access.AllowanceResetsAt(now),
             });
         });
 
         app.MapPost("/api/payments/monnify/webhook", async (
             HttpRequest request,
             MonnifyOptions options,
-            IPaymentProvider provider,
             IPaymentStore payments,
             IEntitlementStore entitlements,
             ILoggerFactory logging) =>
@@ -140,27 +140,28 @@ public static class BillingEndpoints
             var rawBody = await reader.ReadToEndAsync();
 
             var signature = request.Headers[MonnifySignature.Header].ToString();
+            var signed = MonnifySignature.IsValid(rawBody, signature, options.SecretKey);
 
-            if (!MonnifySignature.IsValid(rawBody, signature, options.SecretKey))
+            // Sandbox sends no signature at all. Allowing that is explicit, never inferred from
+            // a base URL, and never extends to a signature that is present and wrong — that is
+            // not an unsigned message, it is a forged one.
+            var accepted = signed
+                || (options.AllowUnsignedWebhooks && string.IsNullOrWhiteSpace(signature));
+
+            if (!accepted)
             {
-                // Sandbox sends no signature at all, so there is an explicit way to allow that
-                // — and it is never inferred, because inferring it from a base URL means one
-                // settings change silently disables the only thing protecting this endpoint.
-                if (!options.AllowUnsignedWebhooks || !string.IsNullOrWhiteSpace(signature))
-                {
-                    log.LogWarning("Rejected a Monnify webhook with a bad or missing signature.");
-                    return Results.Unauthorized();
-                }
-
-                log.LogWarning("Accepted an unsigned Monnify webhook because unsigned webhooks are allowed.");
+                log.LogWarning("Rejected a Monnify webhook with a bad or missing signature.");
+                return Results.Unauthorized();
             }
 
-            var reference = MonnifyWebhook.ReferenceIn(rawBody);
-            if (reference is null)
+            var confirmed = MonnifyWebhook.Read(rawBody);
+            var reference = confirmed?.OurReference ?? confirmed?.ProviderReference;
+
+            if (confirmed is null || reference is null)
             {
-                log.LogWarning("A Monnify webhook carried no reference this could act on.");
+                log.LogWarning("A Monnify webhook carried nothing this could act on.");
                 // Acknowledged anyway: a 200 stops Monnify retrying something that will never
-                // succeed. What it says is "heard", not "agreed".
+                // succeed. It says "heard", not "agreed".
                 return Results.Ok();
             }
 
@@ -171,57 +172,42 @@ public static class BillingEndpoints
                 return Results.Ok();
             }
 
-            if (intent.ProviderReference is { Length: > 0 })
-                await Settle(intent, provider, payments, entitlements);
+            var now = DateTimeOffset.UtcNow;
+
+            var record = new WebhookConfirmation(
+                ReceivedAt: now,
+                RawBody: rawBody,
+                Signature: string.IsNullOrWhiteSpace(signature) ? null : signature,
+                SignatureValid: accepted,
+                EventType: confirmed.EventType,
+                ProviderStatus: confirmed.Status,
+                PaidKobo: confirmed.Paid?.Kobo,
+                Currency: confirmed.Currency,
+                Outcome: Describe(intent, confirmed));
+
+            var settled = intent.Confirm(confirmed, record, now);
+
+            // Saved either way. The confirmation is the evidence, and evidence that only gets
+            // written down when it changed something is evidence nobody can audit.
+            payments.Save(intent);
+
+            if (settled && intent.Status == PaymentStatus.Paid && Plan.Find(intent.PlanCode) is { } plan)
+            {
+                entitlements.Save(Entitlement.Grant(
+                    entitlements.For(intent.StudentId), intent.StudentId, plan, intent.Reference, now));
+
+                log.LogInformation("Payment {Reference} confirmed and access granted.", intent.Reference);
+            }
 
             return Results.Ok();
         });
     }
 
-    /// <summary>
-    /// Verifies a pending payment and grants what it bought, once.
-    ///
-    /// The single place either path can grant anything, so the webhook and the callback cannot
-    /// disagree, and the same payment reported four times grants one subscription.
-    /// </summary>
-    private static async Task Settle(
-        PaymentIntent intent,
-        IPaymentProvider provider,
-        IPaymentStore payments,
-        IEntitlementStore entitlements)
+    /// <summary>One line saying what this message meant for this payment, written as it is read.</summary>
+    private static string Describe(PaymentIntent intent, ConfirmedPayment confirmed)
     {
-        VerifiedPayment verified;
-        try
-        {
-            verified = await provider.VerifyAsync(intent.ProviderReference!);
-        }
-        catch (Exception exception) when (
-            exception is InvalidOperationException or HttpRequestException or TaskCanceledException)
-        {
-            // Left pending on purpose. A verification that could not be reached is not a
-            // failed payment, and marking it failed would strand money somebody has spent.
-            return;
-        }
-
-        // The provider is asked about a reference we stored, so a mismatch here means the
-        // references have been crossed. Refusing is the only safe answer to that.
-        if (verified.OurReference is { Length: > 0 } stated
-            && !string.Equals(stated, intent.Reference, StringComparison.Ordinal))
-        {
-            return;
-        }
-
-        var now = DateTimeOffset.UtcNow;
-        if (!intent.Settle(verified, now)) return;
-
-        payments.Save(intent);
-
-        if (intent.Status != PaymentStatus.Paid) return;
-
-        var plan = Plan.Find(intent.PlanCode);
-        if (plan is null) return;
-
-        entitlements.Save(Entitlement.Grant(
-            entitlements.For(intent.StudentId), intent.StudentId, plan, intent.Reference, now));
+        if (intent.IsSettled) return $"Already {intent.Status}; recorded and ignored.";
+        if (!confirmed.SaysPaid) return $"Reported {confirmed.Status ?? confirmed.EventType ?? "nothing"}; not a payment.";
+        return $"Reported {confirmed.Paid} paid.";
     }
 }

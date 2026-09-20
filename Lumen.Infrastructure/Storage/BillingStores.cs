@@ -83,3 +83,42 @@ public sealed class FileEntitlementStore : IEntitlementStore
     public Entitlement? For(Guid studentId) =>
         _byStudent.TryGetValue(studentId, out var entitlement) ? entitlement : null;
 }
+
+public interface IUploadLedger
+{
+    void Record(UploadRecord upload);
+
+    /// <summary>How many documents this student has turned into courses in the month containing <paramref name="when"/>.</summary>
+    int CountInMonth(Guid studentId, DateTimeOffset when);
+}
+
+/// <summary>
+/// The uploads a student has made, on disk.
+///
+/// Small rows and never pruned: this is what decides whether somebody is asked to pay, so a
+/// row that quietly disappears is a free month nobody granted.
+/// </summary>
+public sealed class FileUploadLedger : IUploadLedger
+{
+    private readonly ConcurrentBag<UploadRecord> _uploads = [];
+    private readonly string _root;
+
+    public FileUploadLedger(string root)
+    {
+        _root = Path.Combine(root, "uploads-ledger");
+        Directory.CreateDirectory(_root);
+
+        foreach (var upload in JsonFiles.ReadAll<UploadRecord>(_root)) _uploads.Add(upload);
+    }
+
+    public void Record(UploadRecord upload)
+    {
+        ArgumentNullException.ThrowIfNull(upload);
+
+        _uploads.Add(upload);
+        JsonFiles.Write(Path.Combine(_root, $"{upload.Id}.json"), upload);
+    }
+
+    public int CountInMonth(Guid studentId, DateTimeOffset when) =>
+        _uploads.Count(upload => upload.StudentId == studentId && upload.IsInMonthOf(when));
+}

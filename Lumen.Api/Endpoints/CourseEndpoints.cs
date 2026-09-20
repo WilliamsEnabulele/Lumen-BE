@@ -1,5 +1,7 @@
+using Lumen.Domain.Billing;
 using Lumen.Domain.Ingestion;
 using Lumen.Infrastructure.Extraction;
+using Lumen.Infrastructure.Billing;
 using Lumen.Infrastructure.Ingestion;
 using Lumen.Infrastructure.Storage;
 
@@ -13,6 +15,9 @@ public static class CourseEndpoints
     /// </summary>
     private static readonly Guid DefaultTenant = Guid.Parse("0197b9c2-0000-7000-8000-000000000001");
 
+    /// <summary>Until there is authentication, every upload belongs to the same student.</summary>
+    private static readonly Guid DefaultStudent = Guid.Parse("0197b9c2-0000-7000-8000-000000000002");
+
     /// <summary>Generous for a chapter or a deck, low enough that a mis-drop does not fill the disk.</summary>
     private const long MaxUploadBytes = 32 * 1024 * 1024;
 
@@ -21,8 +26,29 @@ public static class CourseEndpoints
         app.MapGet("/api/formats", (DocumentExtractors extractors) =>
             Results.Ok(new { supported = extractors.SupportedExtensions }));
 
-        app.MapPost("/api/courses", async (HttpRequest request, IngestionPipeline pipeline) =>
+        app.MapPost("/api/courses", async (
+            HttpRequest request,
+            IngestionPipeline pipeline,
+            IEntitlementStore entitlements,
+            IUploadLedger uploads,
+            BillingEnforcement billing) =>
         {
+            // The metered act. Checked before a byte is read, so somebody out of allowance is
+            // told before they wait on an upload that was never going to be accepted.
+            var now = DateTimeOffset.UtcNow;
+            var used = uploads.CountInMonth(DefaultStudent, now);
+
+            if (!Access.MayUpload(billing.Enforced, entitlements.For(DefaultStudent), used, now))
+            {
+                return Results.Json(new
+                {
+                    error = $"That is this month's free document used. A subscription lifts the limit, "
+                            + "or the free one comes back next month.",
+                    freeAllowanceResetsAt = Access.AllowanceResetsAt(now),
+                    plans = "/api/plans",
+                }, statusCode: 402);
+            }
+
             if (!request.HasFormContentType)
                 return Results.BadRequest(new { error = "Send the document as multipart/form-data." });
 
@@ -39,6 +65,18 @@ public static class CourseEndpoints
             {
                 await using var content = file.OpenReadStream();
                 var document = pipeline.Begin(DefaultTenant, file.FileName, file.ContentType, content);
+
+                // Recorded only once the document is genuinely accepted. Counting an upload
+                // that was refused for its format would spend somebody's free month on an
+                // error message.
+                uploads.Record(new UploadRecord
+                {
+                    StudentId = DefaultStudent,
+                    DocumentId = document.Id,
+                    At = now,
+                    CreatedAt = now,
+                });
+
                 return Results.Accepted($"/api/documents/{document.Id}/status", Status(document));
             }
             catch (UnsupportedFormatException exception)

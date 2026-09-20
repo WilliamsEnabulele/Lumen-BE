@@ -56,72 +56,73 @@ public sealed class PaymentIntent : Entity
     /// <summary>Why it ended where it did, in words, for whoever has to answer for it later.</summary>
     public string? Outcome { get; set; }
 
+    /// <summary>
+    /// Every confirmation this payment has received, in order, including the ones that changed
+    /// nothing.
+    ///
+    /// The ones that changed nothing are the point. A duplicate delivery, a message that
+    /// arrived after the payment had already settled, one whose signature did not check out —
+    /// those are exactly what somebody investigating a disputed payment needs to see, and a
+    /// log that only records the decisive message cannot show that four arrived.
+    /// </summary>
+    public List<WebhookConfirmation> Confirmations { get; set; } = [];
+
     public Money Amount => new(AmountKobo);
 
     public bool IsSettled => Status != PaymentStatus.Pending;
 
     /// <summary>
-    /// Applies a verified payment.
+    /// Applies a confirmation that arrived from the provider.
     ///
-    /// Verified, emphatically: the argument is what the provider said when <em>we</em> asked it,
-    /// never what arrived in a webhook. A webhook says something happened; it is not evidence
-    /// of what happened, and treating it as evidence means anyone who can post to the endpoint
-    /// can grant themselves a subscription.
+    /// The confirmation is recorded whatever it says and whatever state this is already in —
+    /// that record is the audit trail and it is never conditional. What is conditional is
+    /// whether it moves anything: only the first confirmation of a payment still pending can,
+    /// which is what makes a duplicate delivery harmless.
     ///
-    /// Returns true when this call is the one that moved it, so the caller can grant access
-    /// exactly once no matter how many times the same payment is reported.
+    /// Returns true when this call is the one that settled it, so the caller grants access
+    /// exactly once no matter how many times Monnify reports the same payment.
     /// </summary>
-    public bool Settle(VerifiedPayment verified, DateTimeOffset now)
+    public bool Confirm(ConfirmedPayment confirmed, WebhookConfirmation received, DateTimeOffset now)
     {
-        ArgumentNullException.ThrowIfNull(verified);
+        ArgumentNullException.ThrowIfNull(confirmed);
+        ArgumentNullException.ThrowIfNull(received);
 
-        if (IsSettled) return false;
-
-        ProviderReference = verified.ProviderReference;
-        PaidKobo = verified.Paid.Kobo;
-        SettledAt = now;
+        Confirmations.Add(received);
         UpdatedAt = now;
 
-        if (!string.Equals(verified.Currency, Currency, StringComparison.OrdinalIgnoreCase))
+        if (IsSettled || !received.SignatureValid) return false;
+
+        ProviderReference ??= confirmed.ProviderReference;
+
+        if (!confirmed.SaysPaid)
+        {
+            // Not settled. A message that does not say money arrived is not a decision that it
+            // never will — the next one may say it did, and closing the payment here would
+            // strand a student who is midway through paying.
+            return false;
+        }
+
+        var paid = confirmed.Paid!.Value;
+        PaidKobo = paid.Kobo;
+        SettledAt = now;
+
+        if (confirmed.Currency is { Length: > 0 } currency
+            && !string.Equals(currency, Currency, StringComparison.OrdinalIgnoreCase))
         {
             Status = PaymentStatus.Failed;
-            Outcome = $"Paid in {verified.Currency}, but this costs {Currency}.";
+            Outcome = $"Paid in {currency}, but this costs {Currency}.";
             return true;
         }
 
-        if (!verified.Succeeded)
-        {
-            Status = PaymentStatus.Failed;
-            Outcome = verified.ProviderStatus is { Length: > 0 } reported
-                ? $"The payment did not complete: {reported}."
-                : "The payment did not complete.";
-            return true;
-        }
-
-        if (!verified.Paid.Covers(Amount))
+        if (!paid.Covers(Amount))
         {
             Status = PaymentStatus.Underpaid;
-            Outcome = $"{verified.Paid} arrived against a price of {Amount}.";
+            Outcome = $"{paid} arrived against a price of {Amount}.";
             return true;
         }
 
         Status = PaymentStatus.Paid;
-        Outcome = $"Paid {verified.Paid}.";
+        Outcome = $"Paid {paid}.";
         return true;
     }
 }
-
-/// <summary>
-/// What the provider says about a payment when asked directly.
-///
-/// A separate type from the webhook payload on purpose. They carry similar fields and only one
-/// of them is trustworthy, and giving them the same shape is how the untrusted one ends up
-/// flowing into a decision.
-/// </summary>
-public sealed record VerifiedPayment(
-    string ProviderReference,
-    string OurReference,
-    Money Paid,
-    string Currency,
-    bool Succeeded,
-    string? ProviderStatus);

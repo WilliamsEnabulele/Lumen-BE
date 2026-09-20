@@ -1,60 +1,112 @@
+using System.Globalization;
 using System.Text.Json.Nodes;
+using Lumen.Domain.Billing;
 
 namespace Lumen.Infrastructure.Billing;
 
 /// <summary>
 /// Reading a Monnify webhook body.
 ///
-/// Kept deliberately tiny, because almost nothing in the body is trusted. The signature says
-/// the message is genuine; it does not make the numbers inside it true, and a payment is
-/// settled from what Monnify says when asked directly. So all this has to find is which
-/// payment the message is about.
+/// This is now the only thing that confirms a payment, which makes the signature check the
+/// whole security boundary and makes this parse the whole business decision. Both halves are
+/// written to fail closed: a body that cannot be read, or that carries no amount, confirms
+/// nothing rather than confirming something with a default in it.
+///
+/// Field lookup is by name at any depth rather than against a fixed shape, because Monnify has
+/// moved these between the top level and an <c>eventData</c> object across versions. Binding to
+/// one shape means a version bump silently stops granting anybody anything — and silence is the
+/// worst failure available here, since the money still leaves the student's account.
 /// </summary>
 public static class MonnifyWebhook
 {
-    /// <summary>
-    /// Pulls a payment reference out of a webhook body, wherever it sits.
-    ///
-    /// Deliberately shallow. Monnify has moved this field between the top level and an
-    /// <c>eventData</c> object across versions, and binding to one shape means a version bump
-    /// silently stops granting anybody anything. Nothing else is read from the body at all —
-    /// not the amount, not the status — so being relaxed about its shape costs nothing: the
-    /// reference only decides which payment to go and ask Monnify about.
-    /// </summary>
+    public static ConfirmedPayment? Read(string rawBody)
+    {
+        var body = Parse(rawBody);
+        if (body is null) return null;
+
+        return new ConfirmedPayment(
+            OurReference: Text(body, "paymentReference"),
+            ProviderReference: Text(body, "transactionReference"),
+            EventType: Text(body, "eventType"),
+            Status: Text(body, "paymentStatus"),
+            Paid: Amount(body, "amountPaid"),
+            Currency: Text(body, "currencyCode") ?? Text(body, "currency"));
+    }
+
+    /// <summary>Which payment a message is about, when that is all we need.</summary>
     public static string? ReferenceIn(string rawBody)
     {
-        JsonNode? body;
+        var body = Parse(rawBody);
+        if (body is null) return null;
+
+        return Text(body, "paymentReference") ?? Text(body, "transactionReference");
+    }
+
+    private static JsonNode? Parse(string rawBody)
+    {
         try
         {
-            body = JsonNode.Parse(rawBody);
+            return JsonNode.Parse(rawBody);
         }
         catch (Exception exception) when (exception is System.Text.Json.JsonException or ArgumentException)
         {
             return null;
         }
+    }
 
-        return Find(body, depth: 0);
+    /// <summary>
+    /// The first value of this name anywhere in the message, breadth first.
+    ///
+    /// Breadth first on purpose: when the same name appears at the top level and nested, the
+    /// outer one is the envelope's and is the one Monnify means.
+    /// </summary>
+    private static JsonNode? Field(JsonNode? root, string name)
+    {
+        var queue = new Queue<JsonNode?>();
+        queue.Enqueue(root);
 
-        static string? Find(JsonNode? node, int depth)
+        var seen = 0;
+
+        while (queue.Count > 0 && seen++ < 512)
         {
-            if (node is not JsonObject own || depth > 4) return null;
+            if (queue.Dequeue() is not JsonObject own) continue;
 
-            foreach (var name in (string[])["paymentReference", "transactionReference"])
-            {
-                if (own[name] is JsonValue value
-                    && value.TryGetValue<string>(out var reference)
-                    && !string.IsNullOrWhiteSpace(reference))
-                {
-                    return reference;
-                }
-            }
+            if (own[name] is { } found and not JsonObject and not JsonArray) return found;
 
-            foreach (var child in own)
-            {
-                if (Find(child.Value, depth + 1) is { } found) return found;
-            }
-
-            return null;
+            foreach (var child in own) queue.Enqueue(child.Value);
         }
+
+        return null;
+    }
+
+    private static string? Text(JsonNode? root, string name)
+    {
+        var field = Field(root, name);
+        if (field is not JsonValue value) return null;
+
+        var text = value.TryGetValue<string>(out var asString)
+            ? asString
+            : value.ToJsonString().Trim('"');
+
+        return string.IsNullOrWhiteSpace(text) ? null : text;
+    }
+
+    /// <summary>
+    /// An amount, read from the JSON text rather than through a double.
+    ///
+    /// Null when it is absent or unreadable, and the caller treats that as "not confirmed".
+    /// A missing amount defaulting to zero would confirm a payment of nothing; defaulting to
+    /// the price would confirm a payment nobody made.
+    /// </summary>
+    private static Money? Amount(JsonNode? root, string name)
+    {
+        if (Text(root, name) is not { } text) return null;
+
+        if (!decimal.TryParse(text, NumberStyles.Number, CultureInfo.InvariantCulture, out var naira))
+            return null;
+
+        if (naira < 0) return null;
+
+        return Money.FromNaira(decimal.Round(naira, 2, MidpointRounding.ToEven));
     }
 }

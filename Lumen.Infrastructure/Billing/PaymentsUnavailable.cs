@@ -20,10 +20,6 @@ public sealed class PaymentsUnavailable : IPaymentProvider
     public Task<StartedPayment> StartAsync(
         PaymentIntent intent, string customerName, string customerEmail, CancellationToken cancellationToken = default) =>
         throw new PaymentsNotConfiguredException();
-
-    public Task<VerifiedPayment> VerifyAsync(
-        string providerReference, CancellationToken cancellationToken = default) =>
-        throw new PaymentsNotConfiguredException();
 }
 
 /// <summary>Whether a student has to have paid to be taught.</summary>

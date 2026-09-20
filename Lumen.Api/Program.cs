@@ -23,6 +23,7 @@ builder.Services.AddSingleton<ICourseStore>(_ => new FileCourseStore(dataRoot));
 builder.Services.AddSingleton<IUploadStorage>(_ => new LocalDiskUploadStorage(dataRoot));
 builder.Services.AddSingleton<IPaymentStore>(_ => new FilePaymentStore(dataRoot));
 builder.Services.AddSingleton<IEntitlementStore>(_ => new FileEntitlementStore(dataRoot));
+builder.Services.AddSingleton<IUploadLedger>(_ => new FileUploadLedger(dataRoot));
 builder.Services.AddSingleton<ISessionStore>(_ => new FileSessionStore(dataRoot));
 builder.Services.AddSingleton<IMasteryStore>(_ => new FileMasteryStore(dataRoot));
 builder.Services.AddSingleton<IngestionPipeline>();
