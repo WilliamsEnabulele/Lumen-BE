@@ -4,6 +4,7 @@ using Lumen.Api.Endpoints;
 using Lumen.Domain.Assessment;
 using Lumen.Domain.Teaching;
 using Lumen.Infrastructure.Ai;
+using Lumen.Infrastructure.Billing;
 using Lumen.Infrastructure.Extraction;
 using Lumen.Infrastructure.Ingestion;
 using Lumen.Infrastructure.Storage;
@@ -20,6 +21,8 @@ builder.Services.AddSingleton<IDocumentExtractor, PdfExtractor>();
 builder.Services.AddSingleton<DocumentExtractors>();
 builder.Services.AddSingleton<ICourseStore>(_ => new FileCourseStore(dataRoot));
 builder.Services.AddSingleton<IUploadStorage>(_ => new LocalDiskUploadStorage(dataRoot));
+builder.Services.AddSingleton<IPaymentStore>(_ => new FilePaymentStore(dataRoot));
+builder.Services.AddSingleton<IEntitlementStore>(_ => new FileEntitlementStore(dataRoot));
 builder.Services.AddSingleton<ISessionStore>(_ => new FileSessionStore(dataRoot));
 builder.Services.AddSingleton<IMasteryStore>(_ => new FileMasteryStore(dataRoot));
 builder.Services.AddSingleton<IngestionPipeline>();
@@ -68,6 +71,29 @@ builder.Services.AddSingleton<IAnswerJudge>(services => judge switch
     _ => ActivatorUtilities.CreateInstance<UnjudgedAnswers>(services),
 });
 
+// Payments. A server with credentials charges; one without says so plainly rather than
+// pretending to take money, and teaching stays open because a paywall nobody can pay through
+// is just a closed door.
+var monnify = builder.Configuration.GetSection(MonnifyOptions.Section).Get<MonnifyOptions>() ?? new MonnifyOptions();
+monnify.ApiKey ??= Environment.GetEnvironmentVariable("MONNIFY_API_KEY");
+monnify.SecretKey ??= Environment.GetEnvironmentVariable("MONNIFY_SECRET_KEY");
+monnify.ContractCode ??= Environment.GetEnvironmentVariable("MONNIFY_CONTRACT_CODE");
+builder.Services.AddSingleton(monnify);
+
+var billing = builder.Configuration.GetSection(BillingOptions.Section).Get<BillingOptions>() ?? new BillingOptions();
+var enforceBilling = billing.Enforce ?? monnify.IsConfigured;
+builder.Services.AddSingleton(new BillingEnforcement(enforceBilling));
+
+if (monnify.IsConfigured)
+{
+    builder.Services.AddHttpClient<MonnifyClient>();
+    builder.Services.AddSingleton<IPaymentProvider>(services => services.GetRequiredService<MonnifyClient>());
+}
+else
+{
+    builder.Services.AddSingleton<IPaymentProvider, PaymentsUnavailable>();
+}
+
 builder.Services.ConfigureHttpJsonOptions(options =>
 {
     // Enums travel as names. A client reading `"stage": 2` has to keep a copy of our numbering
@@ -87,9 +113,17 @@ var app = builder.Build();
 
 if (app.Environment.IsDevelopment()) app.UseCors(DevelopmentCors);
 
-app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
+app.MapGet("/health", () => Results.Ok(new
+{
+    status = "ok",
+    // Said out loud, because "is this server charging people" is the first question anybody
+    // debugging a deployment asks and the most expensive one to get wrong.
+    payments = monnify.IsConfigured ? "monnify" : "none",
+    billing = enforceBilling ? "enforced" : "open",
+}));
 app.MapCourseEndpoints();
 app.MapLessonEndpoints();
+app.MapBillingEndpoints();
 
 app.Run();
 

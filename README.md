@@ -77,6 +77,48 @@ photographed textbooks are everywhere, and building a course out of one produces
 course and no explanation; the message says it looks like a scan and needs OCR first, which is
 a different problem from a document that is simply too thin.
 
+## Payments
+
+Monnify, behind an `IPaymentProvider` seam. A server with credentials charges; one without says
+so plainly from `/health` and leaves teaching open, because a paywall nobody can pay through is
+just a closed door.
+
+```jsonc
+{
+  "Billing": {
+    "Enforce": true,            // omit to follow whether Monnify is configured
+    "Monnify": {
+      "BaseUrl": "https://sandbox.monnify.com",
+      "ContractCode": "…",
+      "RedirectUrl": "https://lumen.example/paid",
+      "AllowUnsignedWebhooks": false
+    }
+  }
+}
+```
+
+Keys come from `MONNIFY_API_KEY`, `MONNIFY_SECRET_KEY` and `MONNIFY_CONTRACT_CODE`, and never
+from a settings file that could be committed.
+
+One rule runs through the whole flow: **nothing arriving from outside decides anything.**
+
+- The **price** is read from the plan in code, never from the request. A price a browser can
+  name is a price a browser will name, and it will be zero.
+- The **webhook** is a hint that something happened, not evidence of what. Its signature is
+  checked as an HMAC-SHA512 over the *raw* body — re-serialising changes whitespace and key
+  order, and therefore the hash, every time — and then the only field read from it is the
+  reference, which says which payment to go and ask Monnify about.
+- **Settlement** happens in one place that both the webhook and the return-from-checkout page
+  run through, so the same payment reported four times grants one subscription, and the flow
+  still completes when the webhook never arrives.
+- **Underpayment** is its own terminal state, not a failure. Somebody is owed either the rest
+  of the service or their money back, and a state saying "failed" hides that.
+- **Renewing early** extends the time left rather than replacing it.
+
+Sandbox sends no signature header at all. `AllowUnsignedWebhooks` exists for that and is never
+inferred from the base URL, because inferring it means one settings change silently disables
+the only thing protecting the endpoint.
+
 ## Which model does what
 
 Three roles, chosen independently, because they are not the same purchase:

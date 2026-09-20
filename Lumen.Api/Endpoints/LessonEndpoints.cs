@@ -1,7 +1,9 @@
 using Lumen.Domain.Assessment;
+using Lumen.Domain.Billing;
 using Lumen.Domain.Canvas;
 using Lumen.Domain.Courses;
 using Lumen.Domain.Teaching;
+using Lumen.Infrastructure.Billing;
 using Lumen.Infrastructure.Storage;
 
 namespace Lumen.Api.Endpoints;
@@ -23,8 +25,22 @@ public static class LessonEndpoints
 
     public static void MapLessonEndpoints(this WebApplication app)
     {
-        app.MapPost("/api/sessions", (StartSessionRequest request, ICourseStore courses, ISessionStore sessions) =>
+        app.MapPost("/api/sessions", (
+            StartSessionRequest request,
+            ICourseStore courses,
+            ISessionStore sessions,
+            IEntitlementStore entitlements,
+            BillingEnforcement billing) =>
         {
+            // Checked before the course is even looked up, so a paywall cannot be probed for
+            // which course ids exist.
+            if (!Access.MayLearn(billing.Enforced, entitlements.For(DefaultStudent), DateTimeOffset.UtcNow))
+            {
+                return Results.Json(
+                    new { error = "This needs an active subscription.", plans = "/api/plans" },
+                    statusCode: 402);
+            }
+
             var course = courses.Find(request.CourseId);
             if (course is null) return Results.NotFound();
             if (course.Plan.Lessons.Count == 0)
