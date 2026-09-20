@@ -144,6 +144,26 @@ public class WebhookReadingTests
     }
 
     [Fact]
+    public void A_message_that_contradicts_itself_is_not_a_payment()
+    {
+        // A success event carrying a pending status. Reading it as paid off whichever half
+        // agrees is how a confirmation gets talked into granting something.
+        var confirmed = MonnifyWebhook.Read(
+            """{"eventType":"SUCCESSFUL_TRANSACTION","eventData":{"paymentReference":"lmn_1","paymentStatus":"PENDING","amountPaid":2500}}""");
+
+        Assert.False(confirmed!.SaysPaid);
+    }
+
+    [Fact]
+    public void An_event_type_alone_is_enough_when_no_status_came_with_it()
+    {
+        var confirmed = MonnifyWebhook.Read(
+            """{"eventType":"SUCCESSFUL_TRANSACTION","eventData":{"paymentReference":"lmn_1","amountPaid":2500}}""");
+
+        Assert.True(confirmed!.SaysPaid);
+    }
+
+    [Fact]
     public void A_negative_amount_is_not_an_amount()
     {
         var confirmed = MonnifyWebhook.Read("""{"paymentReference":"lmn_1","paymentStatus":"PAID","amountPaid":-2500}""");

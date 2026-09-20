@@ -47,9 +47,15 @@ public sealed record ConfirmedPayment(
     /// One status counts. Listing the failures instead would mean a status nobody anticipated
     /// arrives as a success, and the ways a payment can not-happen are added to more often
     /// than the ways it can.
+    ///
+    /// A stated status settles it, and the event type is consulted only when no status came at
+    /// all. Accepting either would make a contradictory message — a success event carrying a
+    /// pending status — read as paid off the half that happens to agree, and a contradiction
+    /// is precisely where a confirmation has to fail closed rather than pick a side.
     /// </summary>
     public bool SaysPaid =>
         Paid is not null
-        && (string.Equals(Status, "PAID", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(EventType, "SUCCESSFUL_TRANSACTION", StringComparison.OrdinalIgnoreCase));
+        && (Status is { Length: > 0 }
+            ? string.Equals(Status, "PAID", StringComparison.OrdinalIgnoreCase)
+            : string.Equals(EventType, "SUCCESSFUL_TRANSACTION", StringComparison.OrdinalIgnoreCase));
 }
