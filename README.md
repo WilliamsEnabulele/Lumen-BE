@@ -81,6 +81,10 @@ Ownership is checked on every read. A course, a teaching session and a payment a
 through their owner or not at all, and somebody else's is `404` rather than `403` — "forbidden"
 confirms the id is real, which is the one thing a stranger guessing ids wants to learn.
 
+`ISignedIn` lives in `Lumen.Api` rather than `Lumen.Infrastructure`, because it is the one
+piece of identity that knows what a cookie is. Infrastructure stores things; the web layer
+turns an HTTP request into a person.
+
 `Auth:CrossSiteCookies` is for a split-origin development setup only, and is never inferred
 from a hostname: guessing it wrong in production silently drops the CSRF protection
 `SameSite=Lax` gives for free.

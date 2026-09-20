@@ -2,7 +2,7 @@ using Lumen.Domain.Assessment;
 using Lumen.Domain.Canvas;
 using Lumen.Domain.Courses;
 using Lumen.Domain.Teaching;
-using Lumen.Infrastructure.Accounts;
+using Lumen.Api.Accounts;
 using Lumen.Infrastructure.Storage;
 
 namespace Lumen.Api.Endpoints;

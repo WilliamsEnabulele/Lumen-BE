@@ -1,10 +1,16 @@
 using Lumen.Domain.Accounts;
 using Lumen.Infrastructure.Storage;
-using Microsoft.AspNetCore.Http;
 
-namespace Lumen.Infrastructure.Accounts;
+namespace Lumen.Api.Accounts;
 
-/// <summary>Who is making this request, resolved once per request from the session cookie.</summary>
+/// <summary>
+/// Who is making this request, resolved once per request from the session cookie.
+///
+/// Lives here rather than in Lumen.Infrastructure because it is the one piece of identity that
+/// knows what a cookie is. Infrastructure stores things; the web layer is what turns an HTTP
+/// request into a person, and pulling ASP.NET into a class library to avoid that split would
+/// have been the wrong trade.
+/// </summary>
 public interface ISignedIn
 {
     /// <summary>The student, or null when nobody is signed in.</summary>

@@ -1,5 +1,5 @@
 using Lumen.Domain.Billing;
-using Lumen.Infrastructure.Accounts;
+using Lumen.Api.Accounts;
 using Lumen.Infrastructure.Billing;
 using Lumen.Infrastructure.Storage;
 

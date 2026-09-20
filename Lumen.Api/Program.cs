@@ -4,7 +4,7 @@ using Lumen.Api.Endpoints;
 using Lumen.Domain.Assessment;
 using Lumen.Domain.Teaching;
 using System.Threading.RateLimiting;
-using Lumen.Infrastructure.Accounts;
+using Lumen.Api.Accounts;
 using Lumen.Infrastructure.Ai;
 using Lumen.Infrastructure.Billing;
 using Lumen.Infrastructure.Extraction;

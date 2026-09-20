@@ -1,5 +1,5 @@
 using Lumen.Domain.Accounts;
-using Lumen.Infrastructure.Accounts;
+using Lumen.Api.Accounts;
 using Lumen.Infrastructure.Storage;
 
 namespace Lumen.Api.Endpoints;

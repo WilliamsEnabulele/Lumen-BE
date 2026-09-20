@@ -1,7 +1,7 @@
 using Lumen.Domain.Billing;
 using Lumen.Domain.Ingestion;
 using Lumen.Infrastructure.Extraction;
-using Lumen.Infrastructure.Accounts;
+using Lumen.Api.Accounts;
 using Lumen.Infrastructure.Billing;
 using Lumen.Infrastructure.Ingestion;
 using Lumen.Infrastructure.Storage;
