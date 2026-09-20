@@ -27,7 +27,7 @@ public sealed class IngestionPipeline(
 {
     private readonly ConcurrentDictionary<Guid, SourceDocument> _documents = new();
 
-    public SourceDocument Begin(Guid tenantId, string fileName, string contentType, Stream content)
+    public SourceDocument Begin(Guid tenantId, Guid ownerId, string fileName, string contentType, Stream content)
     {
         var extension = Path.GetExtension(fileName).ToLowerInvariant();
         if (extractors.For(fileName) is null)
@@ -39,6 +39,7 @@ public sealed class IngestionPipeline(
         var document = new SourceDocument
         {
             TenantId = tenantId,
+            OwnerId = ownerId,
             CourseId = courseId,
             FileName = fileName,
             ContentType = contentType,
@@ -96,7 +97,8 @@ public sealed class IngestionPipeline(
                 return;
             }
 
-            courses.Save(new StoredCourse(document.CourseId, plan, author.Name, DateTimeOffset.UtcNow));
+            courses.Save(new StoredCourse(
+                document.CourseId, plan, author.Name, DateTimeOffset.UtcNow, document.OwnerId));
             document.Stage = IngestionStage.Ready;
 
             logger.LogInformation(

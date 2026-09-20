@@ -9,13 +9,30 @@ namespace Lumen.Infrastructure.Storage;
 /// written by the deterministic fallback are not the same artefact, and a reviewer needs to
 /// know which they are looking at.
 /// </param>
-public sealed record StoredCourse(Guid Id, LessonPlan Plan, string AuthoredBy, DateTimeOffset CreatedAt);
+/// <param name="OwnerId">
+/// Whose document this was. Checked on every read rather than assumed from possession of the
+/// id, because a course id travels in URLs and a guessable-or-shared id must not be a way into
+/// somebody else's material.
+/// </param>
+public sealed record StoredCourse(
+    Guid Id, LessonPlan Plan, string AuthoredBy, DateTimeOffset CreatedAt, Guid OwnerId)
+{
+    public bool BelongsTo(Guid studentId) => OwnerId == studentId;
+}
 
 public interface ICourseStore
 {
     void Save(StoredCourse course);
     StoredCourse? Find(Guid courseId);
-    IReadOnlyList<StoredCourse> List();
+
+    /// <summary>
+    /// The course, only if it is this student's. Separate from <see cref="Find"/> so that a
+    /// handler which forgets to check ownership has to have been written to forget, rather
+    /// than simply not have remembered.
+    /// </summary>
+    StoredCourse? FindFor(Guid studentId, Guid courseId);
+
+    IReadOnlyList<StoredCourse> ListFor(Guid studentId);
 }
 
 /// <summary>
@@ -49,8 +66,14 @@ public sealed class FileCourseStore : ICourseStore
     public StoredCourse? Find(Guid courseId) =>
         _courses.TryGetValue(courseId, out var course) ? course : null;
 
-    public IReadOnlyList<StoredCourse> List() =>
-        _courses.Values.OrderByDescending(course => course.CreatedAt).ToArray();
+    public StoredCourse? FindFor(Guid studentId, Guid courseId) =>
+        Find(courseId) is { } course && course.BelongsTo(studentId) ? course : null;
+
+    public IReadOnlyList<StoredCourse> ListFor(Guid studentId) =>
+        _courses.Values
+            .Where(course => course.BelongsTo(studentId))
+            .OrderByDescending(course => course.CreatedAt)
+            .ToArray();
 }
 
 public interface IUploadStorage

@@ -2,6 +2,7 @@ using Lumen.Domain.Assessment;
 using Lumen.Domain.Canvas;
 using Lumen.Domain.Courses;
 using Lumen.Domain.Teaching;
+using Lumen.Infrastructure.Accounts;
 using Lumen.Infrastructure.Storage;
 
 namespace Lumen.Api.Endpoints;
@@ -18,16 +19,19 @@ public sealed record TurnRequest(string? Said);
 /// </summary>
 public static class LessonEndpoints
 {
-    /// <summary>Until there is authentication, every session belongs to the same student.</summary>
-    private static readonly Guid DefaultStudent = Guid.Parse("0197b9c2-0000-7000-8000-000000000002");
-
     public static void MapLessonEndpoints(this WebApplication app)
     {
         // Not metered. The charge lands on turning a document into a course, so being taught
         // from one you were allowed to create is never charged for a second time.
-        app.MapPost("/api/sessions", (StartSessionRequest request, ICourseStore courses, ISessionStore sessions) =>
+        app.MapPost("/api/sessions", (
+            StartSessionRequest request, ICourseStore courses, ISessionStore sessions, ISignedIn signedIn) =>
         {
-            var course = courses.Find(request.CourseId);
+            if (signedIn.Student is not { } student)
+                return Results.Json(new { error = "Sign in to start a lesson." }, statusCode: 401);
+
+            // Looked up through the owning read, so teaching somebody else's document is not a
+            // check that could be forgotten — it is the only way to get the course at all.
+            var course = courses.FindFor(student.Id, request.CourseId);
             if (course is null) return Results.NotFound();
             if (course.Plan.Lessons.Count == 0)
                 return Results.BadRequest(new { error = "That course has no lessons to teach." });
@@ -35,7 +39,7 @@ public static class LessonEndpoints
             var session = new TeachingSession
             {
                 CourseId = course.Id,
-                StudentId = DefaultStudent,
+                StudentId = student.Id,
                 CreatedAt = DateTimeOffset.UtcNow,
             };
             sessions.Save(session);
@@ -50,9 +54,10 @@ public static class LessonEndpoints
             ISessionStore sessions,
             IMasteryStore mastery,
             IAnswerJudge judge,
-            ITutorBrain brain) =>
+            ITutorBrain brain,
+            ISignedIn signedIn) =>
         {
-            var session = sessions.Find(sessionId);
+            var session = Owned(sessions, sessionId, signedIn);
             if (session is null) return Results.NotFound();
 
             var course = courses.Find(session.CourseId);
@@ -152,9 +157,9 @@ public static class LessonEndpoints
 
         // The simplest useful report: what this student is believed to know, and the evidence.
         app.MapGet("/api/sessions/{sessionId:guid}/progress", (
-            Guid sessionId, ISessionStore sessions, IMasteryStore mastery) =>
+            Guid sessionId, ISessionStore sessions, IMasteryStore mastery, ISignedIn signedIn) =>
         {
-            var session = sessions.Find(sessionId);
+            var session = Owned(sessions, sessionId, signedIn);
             if (session is null) return Results.NotFound();
 
             return Results.Ok(mastery.ForStudent(session.StudentId, session.CourseId).Select(record => new
@@ -175,6 +180,21 @@ public static class LessonEndpoints
                 }),
             }));
         });
+    }
+
+    /// <summary>
+    /// A session, only when it is the caller's.
+    ///
+    /// One helper rather than a check repeated in each handler, because a session id is the key
+    /// to somebody's whole transcript and their mastery record, and the version of this bug
+    /// that ships is always the one handler where the check was left out.
+    /// </summary>
+    private static TeachingSession? Owned(ISessionStore sessions, Guid sessionId, ISignedIn signedIn)
+    {
+        if (signedIn.Student is not { } student) return null;
+
+        var session = sessions.Find(sessionId);
+        return session is not null && session.StudentId == student.Id ? session : null;
     }
 
     /// <summary>

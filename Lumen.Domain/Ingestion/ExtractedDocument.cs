@@ -39,6 +39,9 @@ public sealed record ExtractedBlock(BlockKind Kind, string Text, string SourceRe
 public sealed class SourceDocument : Entity
 {
     public Guid CourseId { get; set; }
+
+    /// <summary>Whose upload this is. Carried onto the course it becomes.</summary>
+    public Guid OwnerId { get; set; }
     public string FileName { get; set; } = string.Empty;
     public string ContentType { get; set; } = string.Empty;
     public long SizeBytes { get; set; }

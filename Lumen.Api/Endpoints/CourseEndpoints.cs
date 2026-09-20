@@ -1,6 +1,7 @@
 using Lumen.Domain.Billing;
 using Lumen.Domain.Ingestion;
 using Lumen.Infrastructure.Extraction;
+using Lumen.Infrastructure.Accounts;
 using Lumen.Infrastructure.Billing;
 using Lumen.Infrastructure.Ingestion;
 using Lumen.Infrastructure.Storage;
@@ -15,8 +16,6 @@ public static class CourseEndpoints
     /// </summary>
     private static readonly Guid DefaultTenant = Guid.Parse("0197b9c2-0000-7000-8000-000000000001");
 
-    /// <summary>Until there is authentication, every upload belongs to the same student.</summary>
-    private static readonly Guid DefaultStudent = Guid.Parse("0197b9c2-0000-7000-8000-000000000002");
 
     /// <summary>Generous for a chapter or a deck, low enough that a mis-drop does not fill the disk.</summary>
     private const long MaxUploadBytes = 32 * 1024 * 1024;
@@ -31,14 +30,20 @@ public static class CourseEndpoints
             IngestionPipeline pipeline,
             IEntitlementStore entitlements,
             IUploadLedger uploads,
-            BillingEnforcement billing) =>
+            BillingEnforcement billing,
+            ISignedIn signedIn) =>
         {
+            if (!signedIn.IsSignedIn)
+                return Results.Json(new { error = "Sign in to upload a document." }, statusCode: 401);
+
+            var student = signedIn.Id;
+
             // The metered act. Checked before a byte is read, so somebody out of allowance is
             // told before they wait on an upload that was never going to be accepted.
             var now = DateTimeOffset.UtcNow;
-            var used = uploads.CountInMonth(DefaultStudent, now);
+            var used = uploads.CountInMonth(student, now);
 
-            if (!Access.MayUpload(billing.Enforced, entitlements.For(DefaultStudent), used, now))
+            if (!Access.MayUpload(billing.Enforced, entitlements.For(student), used, now))
             {
                 return Results.Json(new
                 {
@@ -64,14 +69,14 @@ public static class CourseEndpoints
             try
             {
                 await using var content = file.OpenReadStream();
-                var document = pipeline.Begin(DefaultTenant, file.FileName, file.ContentType, content);
+                var document = pipeline.Begin(DefaultTenant, student, file.FileName, file.ContentType, content);
 
                 // Recorded only once the document is genuinely accepted. Counting an upload
                 // that was refused for its format would spend somebody's free month on an
                 // error message.
                 uploads.Record(new UploadRecord
                 {
-                    StudentId = DefaultStudent,
+                    StudentId = student,
                     DocumentId = document.Id,
                     At = now,
                     CreatedAt = now,
@@ -86,13 +91,22 @@ public static class CourseEndpoints
         })
         .DisableAntiforgery();
 
-        app.MapGet("/api/documents/{documentId:guid}/status", (Guid documentId, IngestionPipeline pipeline) =>
+        app.MapGet("/api/documents/{documentId:guid}/status", (
+            Guid documentId, IngestionPipeline pipeline, ISignedIn signedIn) =>
         {
             var document = pipeline.Status(documentId);
-            return document is null ? Results.NotFound() : Results.Ok(Status(document));
+
+            // Somebody else's upload is not found rather than forbidden. "Forbidden" confirms
+            // the id is real, which is the one thing a stranger guessing ids wants to learn.
+            return document is null || document.OwnerId != signedIn.Student?.Id
+                ? Results.NotFound()
+                : Results.Ok(Status(document));
         });
 
-        app.MapGet("/api/courses", (ICourseStore store) => Results.Ok(store.List().Select(course => new
+        app.MapGet("/api/courses", (ICourseStore store, ISignedIn signedIn) =>
+            signedIn.Student is not { } owner
+                ? Results.Json(new { error = "Sign in to see your courses." }, statusCode: 401)
+                : Results.Ok(store.ListFor(owner.Id).Select(course => new
         {
             id = course.Id,
             title = course.Plan.CourseTitle,
@@ -101,9 +115,9 @@ public static class CourseEndpoints
             createdAt = course.CreatedAt,
         })));
 
-        app.MapGet("/api/courses/{courseId:guid}", (Guid courseId, ICourseStore store) =>
+        app.MapGet("/api/courses/{courseId:guid}", (Guid courseId, ICourseStore store, ISignedIn signedIn) =>
         {
-            var course = store.Find(courseId);
+            var course = signedIn.Student is { } owner ? store.FindFor(owner.Id, courseId) : null;
             if (course is null) return Results.NotFound();
 
             return Results.Ok(new

@@ -1,3 +1,4 @@
+using Lumen.Domain.Accounts;
 using Lumen.Domain.Assessment;
 using Lumen.Domain.Canvas;
 using Lumen.Domain.Teaching;
@@ -200,6 +201,83 @@ public sealed class PersistenceTests : IDisposable
         store.For(Guid.CreateVersion7(), Guid.CreateVersion7(), "untouched", "Untouched");
 
         Assert.Empty(Directory.EnumerateFiles(Path.Combine(_root, "mastery"), "*.json"));
+    }
+
+    [Fact]
+    public void A_course_is_only_ever_found_for_the_student_who_uploaded_it()
+    {
+        // The check that stops a course id, which travels in URLs, from being a way into
+        // somebody else's material.
+        var mine = Guid.CreateVersion7();
+        var theirs = Guid.CreateVersion7();
+
+        var store = new FileCourseStore(_root);
+        var course = new StoredCourse(
+            Guid.CreateVersion7(), new LessonPlan("Loops", "", []), "test", DateTimeOffset.UtcNow, mine);
+        store.Save(course);
+
+        Assert.NotNull(store.FindFor(mine, course.Id));
+        Assert.Null(store.FindFor(theirs, course.Id));
+        Assert.Empty(store.ListFor(theirs));
+        Assert.Single(store.ListFor(mine));
+    }
+
+    [Fact]
+    public void An_account_and_its_sessions_survive_a_restart()
+    {
+        var student = new Student
+        {
+            Email = "Ada@Example.com",
+            EmailKey = Student.KeyFor("Ada@Example.com"),
+            Name = "Ada",
+            PasswordHash = PasswordHash.Of("a-long-enough-password"),
+        };
+        new FileStudentStore(_root).Save(student);
+
+        var (session, token) = AuthSession.Issue(student.Id, DateTimeOffset.UtcNow);
+        new FileAuthSessionStore(_root).Save(session);
+
+        // Fresh stores, as if the process had died and come back.
+        var restored = new FileStudentStore(_root).FindByEmail("ada@EXAMPLE.com");
+        var signedIn = new FileAuthSessionStore(_root).FindByTokenHash(AuthSession.HashOf(token));
+
+        Assert.NotNull(restored);
+        Assert.True(PasswordHash.Matches("a-long-enough-password", restored.PasswordHash));
+        Assert.NotNull(signedIn);
+        Assert.Equal(student.Id, signedIn.StudentId);
+    }
+
+    [Fact]
+    public void Signing_out_ends_every_session_and_the_token_stops_working_immediately()
+    {
+        var student = Guid.CreateVersion7();
+        var store = new FileAuthSessionStore(_root);
+
+        var (laptop, laptopToken) = AuthSession.Issue(student, DateTimeOffset.UtcNow);
+        var (phone, _) = AuthSession.Issue(student, DateTimeOffset.UtcNow);
+        store.Save(laptop);
+        store.Save(phone);
+
+        store.RevokeAllFor(student, DateTimeOffset.UtcNow);
+
+        var found = new FileAuthSessionStore(_root).FindByTokenHash(AuthSession.HashOf(laptopToken));
+
+        Assert.NotNull(found);
+        Assert.False(found.IsUsableAt(DateTimeOffset.UtcNow));
+    }
+
+    [Fact]
+    public void One_students_sign_out_does_not_touch_another_students_session()
+    {
+        var mine = Guid.CreateVersion7();
+        var store = new FileAuthSessionStore(_root);
+
+        var (theirs, theirToken) = AuthSession.Issue(Guid.CreateVersion7(), DateTimeOffset.UtcNow);
+        store.Save(theirs);
+
+        store.RevokeAllFor(mine, DateTimeOffset.UtcNow);
+
+        Assert.True(store.FindByTokenHash(AuthSession.HashOf(theirToken))!.IsUsableAt(DateTimeOffset.UtcNow));
     }
 
     [Fact]

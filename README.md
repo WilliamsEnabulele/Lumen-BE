@@ -61,6 +61,30 @@ Without `ANTHROPIC_API_KEY` set, the server swaps the lesson author, the tutor a
 judge for a deterministic trio. That is a degraded mode so the upload path stays runnable
 offline, not a second implementation — it does not teach, it recites.
 
+## Accounts
+
+Email and password, with the session in an HttpOnly cookie.
+
+- **PBKDF2-HMAC-SHA256 at 210,000 iterations**, salted per password, compared in constant time.
+  The cost is recorded inside the hash, so raising it later re-hashes people as they sign in
+  rather than locking them out.
+- **The session token is stored as its SHA-256**, never as itself. Whoever reads that store
+  must not come away able to sign in as anybody.
+- **Sessions are server-side and revocable.** Signing out has to mean now, and a self-contained
+  token answers "has this been revoked" with "not until it expires".
+- **A failed sign-in says one thing** whichever half was wrong, and takes the same time either
+  way. Distinguishing them hands out a list of real accounts.
+- **Sign-in and sign-up are rate limited** by address. A slow hash protects a stolen database
+  and does nothing about ten thousand guesses at one live account.
+
+Ownership is checked on every read. A course, a teaching session and a payment are found
+through their owner or not at all, and somebody else's is `404` rather than `403` — "forbidden"
+confirms the id is real, which is the one thing a stranger guessing ids wants to learn.
+
+`Auth:CrossSiteCookies` is for a split-origin development setup only, and is never inferred
+from a hostname: guessing it wrong in production silently drops the CSRF protection
+`SameSite=Lax` gives for free.
+
 ## What can be uploaded
 
 `.txt`, `.md`, `.docx`, `.pptx`, `.pdf`.

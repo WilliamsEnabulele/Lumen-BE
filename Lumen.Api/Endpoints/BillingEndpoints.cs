@@ -1,4 +1,5 @@
 using Lumen.Domain.Billing;
+using Lumen.Infrastructure.Accounts;
 using Lumen.Infrastructure.Billing;
 using Lumen.Infrastructure.Storage;
 
@@ -16,8 +17,6 @@ public sealed record StartPaymentRequest(string PlanCode, string? CustomerName, 
 /// </summary>
 public static class BillingEndpoints
 {
-    private static readonly Guid DefaultStudent = Guid.Parse("0197b9c2-0000-7000-8000-000000000002");
-
     public static void MapBillingEndpoints(this WebApplication app)
     {
         app.MapGet("/api/plans", () => Results.Ok(Plan.All.Select(plan => new
@@ -32,8 +31,12 @@ public static class BillingEndpoints
         app.MapPost("/api/payments", async (
             StartPaymentRequest request,
             IPaymentProvider provider,
-            IPaymentStore payments) =>
+            IPaymentStore payments,
+            ISignedIn signedIn) =>
         {
+            if (signedIn.Student is not { } student)
+                return Results.Json(new { error = "Sign in before paying." }, statusCode: 401);
+
             var plan = Plan.Find(request.PlanCode);
             if (plan is null) return Results.BadRequest(new { error = "There is no such plan." });
 
@@ -45,7 +48,7 @@ public static class BillingEndpoints
             // name is a price the client will name, and it will be zero.
             var intent = new PaymentIntent
             {
-                StudentId = DefaultStudent,
+                StudentId = student.Id,
                 Reference = PaymentReference.Next(),
                 PlanCode = plan.Code,
                 AmountKobo = plan.Price.Kobo,
@@ -59,7 +62,9 @@ public static class BillingEndpoints
             try
             {
                 var started = await provider.StartAsync(
-                    intent, request.CustomerName?.Trim() ?? "Lumen student", email);
+                    intent,
+                    request.CustomerName?.Trim() is { Length: > 0 } named ? named : student.Name,
+                    email);
 
                 intent.ProviderReference = started.ProviderReference;
                 payments.Save(intent);
@@ -85,12 +90,16 @@ public static class BillingEndpoints
         // Where the student lands after paying. Verifies rather than believing the redirect,
         // and means the flow completes even when the webhook never arrives — which it will not,
         // eventually, for somebody.
-        app.MapGet("/api/payments/{reference}", (string reference, IPaymentStore payments) =>
+        app.MapGet("/api/payments/{reference}", (
+            string reference, IPaymentStore payments, ISignedIn signedIn) =>
         {
             if (!PaymentReference.IsWellFormed(reference)) return Results.NotFound();
 
             var intent = payments.Find(reference);
-            if (intent is null) return Results.NotFound();
+
+            // A payment reference travels in a redirect URL a student can read and paste, so
+            // holding one is not the same as owning it.
+            if (intent is null || intent.StudentId != signedIn.Student?.Id) return Results.NotFound();
 
             // Reports what the webhook has already confirmed. It does not go and ask, because
             // confirmation arrives one way only — so a student who lands here before Monnify's
@@ -107,11 +116,17 @@ public static class BillingEndpoints
         });
 
         app.MapGet("/api/entitlement", (
-            IEntitlementStore entitlements, IUploadLedger uploads, BillingEnforcement billing) =>
+            IEntitlementStore entitlements,
+            IUploadLedger uploads,
+            BillingEnforcement billing,
+            ISignedIn signedIn) =>
         {
+            if (signedIn.Student is not { } student)
+                return Results.Json(new { error = "Sign in to see this." }, statusCode: 401);
+
             var now = DateTimeOffset.UtcNow;
-            var granted = entitlements.For(DefaultStudent);
-            var used = uploads.CountInMonth(DefaultStudent, now);
+            var granted = entitlements.For(student.Id);
+            var used = uploads.CountInMonth(student.Id, now);
 
             return Results.Ok(new
             {
@@ -124,6 +139,8 @@ public static class BillingEndpoints
             });
         });
 
+        // Deliberately open to anonymous callers: Monnify has no session here. Its signature
+        // is the authentication, which is why that check is not optional.
         app.MapPost("/api/payments/monnify/webhook", async (
             HttpRequest request,
             MonnifyOptions options,

@@ -3,6 +3,8 @@ using Anthropic;
 using Lumen.Api.Endpoints;
 using Lumen.Domain.Assessment;
 using Lumen.Domain.Teaching;
+using System.Threading.RateLimiting;
+using Lumen.Infrastructure.Accounts;
 using Lumen.Infrastructure.Ai;
 using Lumen.Infrastructure.Billing;
 using Lumen.Infrastructure.Extraction;
@@ -21,6 +23,8 @@ builder.Services.AddSingleton<IDocumentExtractor, PdfExtractor>();
 builder.Services.AddSingleton<DocumentExtractors>();
 builder.Services.AddSingleton<ICourseStore>(_ => new FileCourseStore(dataRoot));
 builder.Services.AddSingleton<IUploadStorage>(_ => new LocalDiskUploadStorage(dataRoot));
+builder.Services.AddSingleton<IStudentStore>(_ => new FileStudentStore(dataRoot));
+builder.Services.AddSingleton<IAuthSessionStore>(_ => new FileAuthSessionStore(dataRoot));
 builder.Services.AddSingleton<IPaymentStore>(_ => new FilePaymentStore(dataRoot));
 builder.Services.AddSingleton<IEntitlementStore>(_ => new FileEntitlementStore(dataRoot));
 builder.Services.AddSingleton<IUploadLedger>(_ => new FileUploadLedger(dataRoot));
@@ -95,6 +99,33 @@ else
     builder.Services.AddSingleton<IPaymentProvider, PaymentsUnavailable>();
 }
 
+// Who is asking. Scoped, so the cookie is resolved once per request rather than once per
+// handler that wants to know.
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddScoped<ISignedIn, SignedIn>();
+
+// Cross-site cookies are for a split-origin development setup only. Never inferred from a
+// hostname: guessing it wrong in production silently drops the CSRF protection SameSite=Lax
+// gives for free.
+var crossSiteCookies = builder.Configuration.GetValue("Auth:CrossSiteCookies", builder.Environment.IsDevelopment());
+var cookiePolicy = new CookiePolicy(crossSiteCookies);
+
+// A password check is slow on purpose, which protects a stolen database and does nothing about
+// somebody trying ten thousand passwords against one live account.
+builder.Services.AddRateLimiter(limiter =>
+{
+    limiter.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    limiter.AddPolicy(RateLimits.Auth, context => RateLimitPartition.GetFixedWindowLimiter(
+        // By address, because the account being guessed at is not the attacker's to choose from.
+        context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+        _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = 10,
+            Window = TimeSpan.FromMinutes(1),
+            QueueLimit = 0,
+        }));
+});
+
 builder.Services.ConfigureHttpJsonOptions(options =>
 {
     // Enums travel as names. A client reading `"stage": 2` has to keep a copy of our numbering
@@ -108,11 +139,16 @@ const string DevelopmentCors = "lumen-dev";
 builder.Services.AddCors(options => options.AddPolicy(DevelopmentCors, policy => policy
     .WithOrigins("http://localhost:4200", "http://127.0.0.1:4200")
     .AllowAnyHeader()
-    .AllowAnyMethod()));
+    .AllowAnyMethod()
+    // The session is a cookie, so the browser has to be told it may send it. Origins stay an
+    // explicit list for exactly this reason — credentials and a wildcard origin cannot mix.
+    .AllowCredentials()));
 
 var app = builder.Build();
 
 if (app.Environment.IsDevelopment()) app.UseCors(DevelopmentCors);
+
+app.UseRateLimiter();
 
 app.MapGet("/health", () => Results.Ok(new
 {
@@ -122,6 +158,7 @@ app.MapGet("/health", () => Results.Ok(new
     payments = monnify.IsConfigured ? "monnify" : "none",
     billing = enforceBilling ? "enforced" : "open",
 }));
+app.MapAuthEndpoints(cookiePolicy);
 app.MapCourseEndpoints();
 app.MapLessonEndpoints();
 app.MapBillingEndpoints();
