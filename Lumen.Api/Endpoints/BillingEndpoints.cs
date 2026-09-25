@@ -1,5 +1,6 @@
 using Lumen.Domain.Billing;
 using Lumen.Api.Accounts;
+using Lumen.Api.Explorer;
 using Lumen.Infrastructure.Billing;
 using Lumen.Infrastructure.Storage;
 
@@ -26,7 +27,9 @@ public static class BillingEndpoints
             price = plan.Price.ToNairaString(),
             currency = "NGN",
             days = plan.GrantsDays,
-        })));
+        })))
+        .AllowAnonymous()
+        .WithTags(ApiTags.Billing);
 
         app.MapPost("/api/payments", async (
             StartPaymentRequest request,
@@ -85,7 +88,8 @@ public static class BillingEndpoints
 
                 return Results.BadRequest(new { error = "That payment could not be started. Nothing has been charged." });
             }
-        });
+        })
+        .WithTags(ApiTags.Billing);
 
         // Where the student lands after paying. Verifies rather than believing the redirect,
         // and means the flow completes even when the webhook never arrives — which it will not,
@@ -113,7 +117,8 @@ public static class BillingEndpoints
                 paid = intent.PaidKobo is long kobo ? new Money(kobo).ToNairaString() : null,
                 outcome = intent.Outcome,
             });
-        });
+        })
+        .WithTags(ApiTags.Billing);
 
         app.MapGet("/api/entitlement", (
             IEntitlementStore entitlements,
@@ -137,7 +142,8 @@ public static class BillingEndpoints
                 freeUploadsLeft = Access.FreeUploadsLeft(used),
                 freeAllowanceResetsAt = Access.AllowanceResetsAt(now),
             });
-        });
+        })
+        .WithTags(ApiTags.Billing);
 
         // Deliberately open to anonymous callers: Monnify has no session here. Its signature
         // is the authentication, which is why that check is not optional.
@@ -217,7 +223,9 @@ public static class BillingEndpoints
             }
 
             return Results.Ok();
-        });
+        })
+        .AllowAnonymous()
+        .WithTags(ApiTags.Billing);
     }
 
     /// <summary>One line saying what this message meant for this payment, written as it is read.</summary>

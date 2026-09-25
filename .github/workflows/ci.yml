@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  # The compiler for this project lives here rather than on anybody's machine, so a branch has
+  # to be buildable without first opening a pull request to ask it a question.
+  workflow_dispatch:
 
 jobs:
   build:
@@ -16,3 +19,55 @@ jobs:
       - run: dotnet restore
       - run: dotnet build --no-restore --configuration Release
       - run: dotnet test --no-build --configuration Release --verbosity normal
+
+      # The OpenAPI document is generated at runtime from the endpoints, so the build proves
+      # nothing at all about it: it compiles just as happily with every operation documented as
+      # open to anybody. Booting the server and reading its own description is the only thing
+      # that catches that, and the failure it catches is somebody writing a client against a
+      # description that is not true.
+      - name: the API describes itself
+        run: |
+          set -uo pipefail
+          ASPNETCORE_ENVIRONMENT=Development ASPNETCORE_URLS=http://localhost:5299 \
+            dotnet run --project Lumen.Api --no-launch-profile --configuration Release --no-build \
+            > /tmp/api-dev.log 2>&1 &
+          api=$!
+          for _ in $(seq 60); do
+            curl -fsS http://localhost:5299/health > /dev/null 2>&1 && break
+            if ! kill -0 "$api" 2>/dev/null; then
+              echo "The API exited before it was ready:"; cat /tmp/api-dev.log; exit 1
+            fi
+            sleep 1
+          done
+          set -e
+          curl -fsS http://localhost:5299/openapi/v1.json -o /tmp/openapi.json
+          # The UI is a separate piece from the document, and can be missing on its own.
+          curl -fsS -o /dev/null http://localhost:5299/swagger/index.html
+          python3 tools/check-openapi.py /tmp/openapi.json
+          kill "$api" 2>/dev/null || true
+
+      # Fail closed. A deployment that has not asked for the explorer does not get one, and
+      # "did that setting actually do anything" is not a question to answer by reading the code.
+      - name: and keeps it to itself in production
+        run: |
+          set -uo pipefail
+          ASPNETCORE_ENVIRONMENT=Production ASPNETCORE_URLS=http://localhost:5300 \
+          LUMEN_JWT_KEY=a-key-long-enough-for-the-startup-check \
+            dotnet run --project Lumen.Api --no-launch-profile --configuration Release --no-build \
+            > /tmp/api-prod.log 2>&1 &
+          api=$!
+          for _ in $(seq 60); do
+            curl -fsS http://localhost:5300/health > /dev/null 2>&1 && break
+            if ! kill -0 "$api" 2>/dev/null; then
+              echo "The API exited before it was ready:"; cat /tmp/api-prod.log; exit 1
+            fi
+            sleep 1
+          done
+          set -e
+          document=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:5300/openapi/v1.json)
+          ui=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:5300/swagger/index.html)
+          kill "$api" 2>/dev/null || true
+          if [ "$document" != "404" ] || [ "$ui" != "404" ]; then
+            echo "Production served the explorer (document $document, ui $ui). It should not exist there."
+            exit 1
+          fi

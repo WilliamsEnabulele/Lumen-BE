@@ -1,5 +1,6 @@
 using Lumen.Domain.Accounts;
 using Lumen.Api.Accounts;
+using Lumen.Api.Explorer;
 using Lumen.Infrastructure.Storage;
 
 namespace Lumen.Api.Endpoints;
@@ -60,7 +61,9 @@ public static class AuthEndpoints
 
             return SignIn(student, sessions, access, response, cookies, now);
         })
-        .RequireRateLimiting(RateLimits.Auth);
+        .RequireRateLimiting(RateLimits.Auth)
+        .AllowAnonymous()
+        .WithTags(ApiTags.Accounts);
 
         app.MapPost("/api/auth/login", (
             SignInRequest request,
@@ -96,7 +99,9 @@ public static class AuthEndpoints
 
             return SignIn(student, sessions, access, response, cookies, now);
         })
-        .RequireRateLimiting(RateLimits.Auth);
+        .RequireRateLimiting(RateLimits.Auth)
+        .AllowAnonymous()
+        .WithTags(ApiTags.Accounts);
 
         // Trading the refresh cookie for a new access token. The one place a session is checked
         // against the store, which is what makes revoking it mean anything.
@@ -132,7 +137,9 @@ public static class AuthEndpoints
                 email = student.Email,
                 name = student.Name,
             });
-        });
+        })
+        .AllowAnonymous()
+        .WithTags(ApiTags.Accounts);
 
         app.MapPost("/api/auth/logout", (
             HttpRequest httpRequest, IAuthSessionStore sessions, HttpResponse response) =>
@@ -156,12 +163,15 @@ public static class AuthEndpoints
             // The access token already issued keeps working until it expires. Nothing can call
             // it back, which is the cost of it being verifiable without a database.
             return Results.Ok(new { signedOut = true, accessTokenValidFor = "up to 15 minutes" });
-        });
+        })
+        .AllowAnonymous()
+        .WithTags(ApiTags.Accounts);
 
         app.MapGet("/api/auth/me", (ISignedIn signedIn) =>
             signedIn.Student is { } student
                 ? Results.Ok(new { id = student.Id, email = student.Email, name = student.Name })
-                : Results.Json(new { error = "Nobody is signed in." }, statusCode: 401));
+                : Results.Json(new { error = "Nobody is signed in." }, statusCode: 401))
+        .WithTags(ApiTags.Accounts);
     }
 
     private static IResult SignIn(

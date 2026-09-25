@@ -3,6 +3,7 @@ using Lumen.Domain.Canvas;
 using Lumen.Domain.Courses;
 using Lumen.Domain.Teaching;
 using Lumen.Api.Accounts;
+using Lumen.Api.Explorer;
 using Lumen.Infrastructure.Storage;
 
 namespace Lumen.Api.Endpoints;
@@ -45,7 +46,8 @@ public static class LessonEndpoints
             sessions.Save(session);
 
             return Results.Ok(Describe(session, course));
-        });
+        })
+        .WithTags(ApiTags.Teaching);
 
         app.MapPost("/api/sessions/{sessionId:guid}/turn", async (
             Guid sessionId,
@@ -153,7 +155,8 @@ public static class LessonEndpoints
                     ? (object?)null
                     : new { verdict = marked.Value.Verdict.ToString(), marked.Value.Outcome.Reason },
             });
-        });
+        })
+        .WithTags(ApiTags.Teaching);
 
         // The simplest useful report: what this student is believed to know, and the evidence.
         app.MapGet("/api/sessions/{sessionId:guid}/progress", (
@@ -179,7 +182,8 @@ public static class LessonEndpoints
                     belief = Math.Round(item.BeliefAfter, 3),
                 }),
             }));
-        });
+        })
+        .WithTags(ApiTags.Teaching);
     }
 
     /// <summary>

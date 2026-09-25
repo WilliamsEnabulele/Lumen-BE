@@ -106,6 +106,38 @@ turns an HTTP request into a person.
 from a hostname: guessing it wrong in production silently drops the CSRF protection
 `SameSite=Lax` gives for free.
 
+## The explorer
+
+```
+http://localhost:5299/swagger
+```
+
+Swagger UI over a document at `/openapi/v1.json`. The document comes from the first-party
+`Microsoft.AspNetCore.OpenApi`; Swashbuckle is here for the UI alone and brings no dependencies
+of its own.
+
+**It is off unless this is development**, or `OpenApi:Expose` says otherwise — and, like
+`Auth:CrossSiteCookies`, never inferred from a hostname. The endpoints exist either way, but a
+browsable, try-it-now index of them is an invitation, and a deployment that wants one should
+have had to decide to.
+
+Press **Authorize** and paste the `accessToken` from `/api/auth/login`. The refresh token is
+deliberately not pasteable: it is an HttpOnly cookie the browser sends to `/api/auth` by
+itself, which is the whole point of it.
+
+These endpoints check `ISignedIn` inside the handler rather than declaring an authorization
+policy — a policy answers with the middleware's empty 401 instead of the sentence each handler
+writes, and those sentences are what the client shows the student. So nothing in the endpoint
+metadata says "this needs a token", and the document says it instead: every operation requires
+the bearer unless its endpoint is marked `AllowAnonymous`. That default runs the safe way
+round. An endpoint added later without a thought is documented as needing a token, and the
+worst that mistake does is ask for one nobody needed; the opposite default publishes a
+protected endpoint as open, and the person who believes it is the one writing a client.
+
+Because the document is generated at runtime, the build proves nothing about it — it compiles
+just as happily with everything documented as open. `tools/check-openapi.py` runs in CI against
+the document a booted server actually serves, and is the only thing that catches it.
+
 ## What can be uploaded
 
 `.txt`, `.md`, `.docx`, `.pptx`, `.pdf`.

@@ -1,6 +1,7 @@
 using System.Text.Json.Serialization;
 using Anthropic;
 using Lumen.Api.Endpoints;
+using Lumen.Api.Explorer;
 using Lumen.Domain.Assessment;
 using Lumen.Domain.Teaching;
 using System.Security.Cryptography;
@@ -158,6 +159,23 @@ builder.Services.AddAuthorization();
 var crossSiteCookies = builder.Configuration.GetValue("Auth:CrossSiteCookies", builder.Environment.IsDevelopment());
 var cookiePolicy = new CookiePolicy(crossSiteCookies);
 
+// The API describes itself, at /swagger, from a document at /openapi/v1.json.
+//
+// Off outside development unless somebody says otherwise, and never inferred from a hostname
+// for the same reason the cookie switch above is not: the endpoints exist either way, but a
+// browsable, try-it-now index of them is an invitation, and a deployment that wants one should
+// have had to decide to. Turning it on is one setting; turning it on by accident should not be.
+var exposeExplorer = builder.Configuration.GetValue("OpenApi:Expose", builder.Environment.IsDevelopment());
+
+if (exposeExplorer)
+{
+    builder.Services.AddOpenApi(options =>
+    {
+        options.AddDocumentTransformer(ApiExplorer.DeclareBearerScheme);
+        options.AddOperationTransformer(ApiExplorer.RequireBearerUnlessAnonymous);
+    });
+}
+
 // A password check is slow on purpose, which protects a stolen database and does nothing about
 // somebody trying ten thousand passwords against one live account.
 builder.Services.AddRateLimiter(limiter =>
@@ -201,6 +219,17 @@ app.UseRateLimiter();
 app.UseAuthentication();
 app.UseAuthorization();
 
+if (exposeExplorer)
+{
+    app.MapOpenApi();
+    app.UseSwaggerUI(options =>
+    {
+        options.SwaggerEndpoint("/openapi/v1.json", "Lumen");
+        options.RoutePrefix = "swagger";
+        options.DocumentTitle = "Lumen API";
+    });
+}
+
 app.MapGet("/health", () => Results.Ok(new
 {
     status = "ok",
@@ -214,7 +243,10 @@ app.MapGet("/health", () => Results.Ok(new
         ? "configured"
         : "ephemeral",
     billing = enforceBilling ? "enforced" : "open",
-}));
+}))
+.AllowAnonymous()
+.WithTags(ApiTags.Service);
+
 app.MapAuthEndpoints(cookiePolicy);
 app.MapCourseEndpoints();
 app.MapLessonEndpoints();

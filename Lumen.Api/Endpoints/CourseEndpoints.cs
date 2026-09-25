@@ -3,6 +3,7 @@ using Lumen.Domain.Ingestion;
 using Lumen.Infrastructure.Extraction;
 using Lumen.Api.Accounts;
 using Lumen.Infrastructure.Billing;
+using Lumen.Api.Explorer;
 using Lumen.Infrastructure.Ingestion;
 using Lumen.Infrastructure.Storage;
 
@@ -23,7 +24,9 @@ public static class CourseEndpoints
     public static void MapCourseEndpoints(this WebApplication app)
     {
         app.MapGet("/api/formats", (DocumentExtractors extractors) =>
-            Results.Ok(new { supported = extractors.SupportedExtensions }));
+            Results.Ok(new { supported = extractors.SupportedExtensions }))
+        .AllowAnonymous()
+        .WithTags(ApiTags.Courses);
 
         app.MapPost("/api/courses", async (
             HttpRequest request,
@@ -89,7 +92,8 @@ public static class CourseEndpoints
                 return Results.BadRequest(new { error = exception.Message });
             }
         })
-        .DisableAntiforgery();
+        .DisableAntiforgery()
+        .WithTags(ApiTags.Courses);
 
         app.MapGet("/api/documents/{documentId:guid}/status", (
             Guid documentId, IngestionPipeline pipeline, ISignedIn signedIn) =>
@@ -101,7 +105,8 @@ public static class CourseEndpoints
             return document is null || document.OwnerId != signedIn.Student?.Id
                 ? Results.NotFound()
                 : Results.Ok(Status(document));
-        });
+        })
+        .WithTags(ApiTags.Courses);
 
         app.MapGet("/api/courses", (ICourseStore store, ISignedIn signedIn) =>
             signedIn.Student is not { } owner
@@ -113,7 +118,8 @@ public static class CourseEndpoints
             summary = course.Plan.Summary,
             authoredBy = course.AuthoredBy,
             createdAt = course.CreatedAt,
-        })));
+        })))
+        .WithTags(ApiTags.Courses);
 
         app.MapGet("/api/courses/{courseId:guid}", (Guid courseId, ICourseStore store, ISignedIn signedIn) =>
         {
@@ -139,7 +145,8 @@ public static class CourseEndpoints
                     }),
                 }),
             });
-        });
+        })
+        .WithTags(ApiTags.Courses);
     }
 
     private static object Status(SourceDocument document) => new
