@@ -22,6 +22,12 @@ NEEDS_BEARER = [
     ("/api/courses", "get"),
     ("/api/sessions", "post"),
     ("/api/entitlement", "get"),
+    # Notes are the most personal thing this server holds. If these ever read as open, the
+    # document is inviting somebody to try.
+    ("/api/courses/{courseId}/notes", "get"),
+    ("/api/courses/{courseId}/notes", "post"),
+    ("/api/notes/{noteId}", "put"),
+    ("/api/notes/{noteId}", "delete"),
     # The one auth endpoint that does need it: "me" answers from the token, not the cookie.
     ("/api/auth/me", "get"),
 ]

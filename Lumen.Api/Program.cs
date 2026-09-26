@@ -34,6 +34,7 @@ builder.Services.AddSingleton<IEntitlementStore>(_ => new FileEntitlementStore(d
 builder.Services.AddSingleton<IUploadLedger>(_ => new FileUploadLedger(dataRoot));
 builder.Services.AddSingleton<ISessionStore>(_ => new FileSessionStore(dataRoot));
 builder.Services.AddSingleton<IMasteryStore>(_ => new FileMasteryStore(dataRoot));
+builder.Services.AddSingleton<IStudyNoteStore>(_ => new FileStudyNoteStore(dataRoot));
 builder.Services.AddSingleton<IngestionPipeline>();
 
 // The AI layer. Reading the document, teaching from it and marking an answer are three
@@ -251,6 +252,7 @@ app.MapAuthEndpoints(cookiePolicy);
 app.MapCourseEndpoints();
 app.MapLessonEndpoints();
 app.MapBillingEndpoints();
+app.MapStudyEndpoints();
 
 app.Run();
 

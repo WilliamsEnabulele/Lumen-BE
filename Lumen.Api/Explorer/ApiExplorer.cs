@@ -15,6 +15,7 @@ public static class ApiTags
     public const string Courses = "Courses";
     public const string Teaching = "Teaching";
     public const string Billing = "Billing";
+    public const string Study = "Study";
 }
 
 /// <summary>

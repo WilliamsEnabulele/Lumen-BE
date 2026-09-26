@@ -138,6 +138,37 @@ Because the document is generated at runtime, the build proves nothing about it 
 just as happily with everything documented as open. `tools/check-openapi.py` runs in CI against
 the document a booted server actually serves, and is the only thing that catches it.
 
+## What a student keeps
+
+Two things, and they are not the same thing.
+
+A **key point** is a line the tutor said, kept because it landed. The words are the tutor's, so
+it carries a `SourceRef` back to the material they came from, and it cannot be edited — editing
+the words while keeping the citation makes it a claim about the material that the material does
+not make. Keeping the same line twice is a double-pressed button, so the second press hands back
+the first one rather than a duplicate.
+
+A **note** is the student's own words. Two notes that read the same are two thoughts they had,
+and refusing the second would be this server telling somebody what they meant. Only the ends are
+trimmed: a note laid out in lines was laid out by a person.
+
+Both hang off the **course**, not the teaching session. A session is one sitting; coming back
+tomorrow starts another, and notes that vanished with the last one are notes nobody would trust
+enough to write. The session id is recorded on them, so a note can still say which sitting it
+came from.
+
+They live on the server rather than in the browser, and that is the feature rather than an
+implementation detail: the sign-up screen promises that a student's courses and what the tutor
+has worked out about them follow between devices, and notes in local storage would be the one
+thing on that screen that quietly did not.
+
+```
+GET    /api/courses/{courseId}/notes
+POST   /api/courses/{courseId}/notes     { kind, body, conceptTitle?, sessionId?, sourceRef? }
+PUT    /api/notes/{noteId}               { body }        — notes only
+DELETE /api/notes/{noteId}
+```
+
 ## What can be uploaded
 
 `.txt`, `.md`, `.docx`, `.pptx`, `.pdf`.
