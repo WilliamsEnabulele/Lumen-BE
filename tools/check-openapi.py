@@ -28,6 +28,10 @@ NEEDS_BEARER = [
     ("/api/courses/{courseId}/notes", "post"),
     ("/api/notes/{noteId}", "put"),
     ("/api/notes/{noteId}", "delete"),
+    # The home screen's three reads. All of them are about one student.
+    ("/api/sessions", "get"),
+    ("/api/progress", "get"),
+    ("/api/streak", "get"),
     # The one auth endpoint that does need it: "me" answers from the token, not the cookie.
     ("/api/auth/me", "get"),
 ]

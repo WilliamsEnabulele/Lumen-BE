@@ -130,6 +130,15 @@ public interface ISessionStore
 {
     void Save(TeachingSession session);
     TeachingSession? Find(Guid sessionId);
+
+    /// <summary>
+    /// This student's sessions, most recently touched first.
+    ///
+    /// What "pick up where you left off" is asking. The position in the plan and the canvas are
+    /// already on the session, so the only thing ever missing was a way to find it again
+    /// without already knowing its id.
+    /// </summary>
+    IReadOnlyList<TeachingSession> ListFor(Guid studentId);
 }
 
 public sealed class InMemorySessionStore : ISessionStore
@@ -144,6 +153,14 @@ public sealed class InMemorySessionStore : ISessionStore
 
     public TeachingSession? Find(Guid sessionId) =>
         _sessions.TryGetValue(sessionId, out var session) ? session : null;
+
+    public IReadOnlyList<TeachingSession> ListFor(Guid studentId) => Recent(_sessions.Values, studentId);
+
+    internal static TeachingSession[] Recent(IEnumerable<TeachingSession> sessions, Guid studentId) =>
+        sessions
+            .Where(session => session.StudentId == studentId)
+            .OrderByDescending(session => session.UpdatedAt)
+            .ToArray();
 }
 
 /// <summary>
@@ -156,6 +173,16 @@ public sealed class InMemorySessionStore : ISessionStore
 public interface IMasteryStore
 {
     MasteryRecord For(Guid studentId, Guid courseId, string conceptKey, string conceptTitle);
+
+    /// <summary>
+    /// Everything this student has ever been believed to know, across every course.
+    ///
+    /// Separate from the per-course read because the home screen asks a different question —
+    /// "what have I shown" rather than "how is this lesson going" — and answering it by looping
+    /// the per-course call over a course list would make the answer depend on a list fetched
+    /// somewhere else, which can disagree with this one.
+    /// </summary>
+    IReadOnlyList<MasteryRecord> AllFor(Guid studentId);
 
     /// <summary>
     /// The record if there is one, without creating it. Separate from <see cref="For"/> because
@@ -188,6 +215,12 @@ public sealed class InMemoryMasteryStore : IMasteryStore
     public IReadOnlyList<MasteryRecord> ForStudent(Guid studentId, Guid courseId) =>
         _records.Values
             .Where(record => record.StudentId == studentId && record.CourseId == courseId)
+            .OrderBy(record => record.ConceptTitle, StringComparer.Ordinal)
+            .ToArray();
+
+    public IReadOnlyList<MasteryRecord> AllFor(Guid studentId) =>
+        _records.Values
+            .Where(record => record.StudentId == studentId)
             .OrderBy(record => record.ConceptTitle, StringComparer.Ordinal)
             .ToArray();
 

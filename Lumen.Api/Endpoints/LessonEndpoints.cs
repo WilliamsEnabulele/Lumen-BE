@@ -57,10 +57,16 @@ public static class LessonEndpoints
             IMasteryStore mastery,
             IAnswerJudge judge,
             ITutorBrain brain,
+            IStudyDayStore days,
             ISignedIn signedIn) =>
         {
             var session = Owned(sessions, sessionId, signedIn);
             if (session is null) return Results.NotFound();
+
+            // Today happened. Recorded on the turn rather than on starting a session, because
+            // opening a lesson and closing it again is not a day's work, and a streak that
+            // counts it is a streak that can be kept without learning anything.
+            days.Record(signedIn.Id, DateOnly.FromDateTime(DateTimeOffset.UtcNow.UtcDateTime));
 
             var course = courses.Find(session.CourseId);
             if (course is null) return Results.NotFound();

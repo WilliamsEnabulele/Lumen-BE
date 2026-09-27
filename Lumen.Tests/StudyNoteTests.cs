@@ -203,3 +203,57 @@ public class StudyNoteStoreTests
         }
     }
 }
+
+/// <summary>
+/// Which days a student turned up, and finding a lesson again without already knowing its id.
+/// </summary>
+public class AttendanceAndResumeTests
+{
+    [Fact]
+    public void Turning_up_twice_in_a_day_is_one_day()
+    {
+        var store = new InMemoryStudyDayStore();
+        var student = Guid.CreateVersion7();
+        var today = new DateOnly(2026, 9, 23);
+
+        store.Record(student, today);
+        store.Record(student, today);
+        store.Record(student, today.AddDays(-1));
+
+        // A streak asks whether the day happened, not how much of it there was.
+        Assert.Equal(2, store.DaysFor(student).Count);
+    }
+
+    [Fact]
+    public void One_students_days_are_not_anothers()
+    {
+        var store = new InMemoryStudyDayStore();
+        var mine = Guid.CreateVersion7();
+        var theirs = Guid.CreateVersion7();
+
+        store.Record(theirs, new DateOnly(2026, 9, 23));
+
+        Assert.Empty(store.DaysFor(mine));
+    }
+
+    [Fact]
+    public void Days_survive_a_restart()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"lumen-days-{Guid.CreateVersion7():N}");
+        var student = Guid.CreateVersion7();
+
+        try
+        {
+            var store = new FileStudyDayStore(root);
+            store.Record(student, new DateOnly(2026, 9, 22));
+            store.Record(student, new DateOnly(2026, 9, 23));
+
+            // A streak that reset every time the server did would be a streak nobody believed.
+            Assert.Equal(2, new FileStudyDayStore(root).DaysFor(student).Count);
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
+    }
+}

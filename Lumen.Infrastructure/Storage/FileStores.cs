@@ -38,6 +38,9 @@ public sealed class FileSessionStore : ISessionStore
         JsonFiles.Write(Path.Combine(_root, $"{session.Id}.json"), session);
     }
 
+    public IReadOnlyList<TeachingSession> ListFor(Guid studentId) =>
+        InMemorySessionStore.Recent(_sessions.Values, studentId);
+
     public TeachingSession? Find(Guid sessionId) =>
         _sessions.TryGetValue(sessionId, out var session) ? session : null;
 }
@@ -89,6 +92,12 @@ public sealed class FileMasteryStore : IMasteryStore
     public IReadOnlyList<MasteryRecord> ForStudent(Guid studentId, Guid courseId) =>
         _records.Values
             .Where(record => record.StudentId == studentId && record.CourseId == courseId)
+            .OrderBy(record => record.ConceptTitle, StringComparer.Ordinal)
+            .ToArray();
+
+    public IReadOnlyList<MasteryRecord> AllFor(Guid studentId) =>
+        _records.Values
+            .Where(record => record.StudentId == studentId)
             .OrderBy(record => record.ConceptTitle, StringComparer.Ordinal)
             .ToArray();
 
